@@ -9,7 +9,7 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 RESET='\033[0m'
 
-BINARY_URL="https://raw.githubusercontent.com/ravidhu/nabu/main/bin/nabu-aarch64-apple-darwin"
+BINARY_URL="https://github.com/ravidhu/nabu/releases/latest/download/nabu-aarch64-apple-darwin"
 APP_PATH="$HOME/Applications/nabu.app"
 TOTAL_STEPS=5
 
