@@ -1,0 +1,22 @@
+[project]
+name = "nabu-transcribe"
+version = "0.1.0"
+description = "mlx-whisper transcription + pyannote speaker diarization for nabu"
+requires-python = ">=3.10"
+dependencies = [
+    "mlx-whisper>=0.4.0",
+    "pyannote.audio>=3.1.0",
+    "torch>=2.1.0",
+    "huggingface-hub>=0.20.0",
+    "soundfile>=0.13.1",
+    "wespeaker @ git+https://github.com/wenet-e2e/wespeaker.git",
+    "onnxruntime>=1.24.3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

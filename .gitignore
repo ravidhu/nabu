@@ -1,0 +1,26 @@
+/target
+*.wav
+*.bin
+
+# Python
+transcribe/.venv/
+transcribe/__pycache__/
+transcribe/.pytest_cache/
+transcribe/tests/__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+
+# macOS
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+
+# Local runs
+*.log
+.tmp/
+
+# Local-only notes (CHANGELOG, ADRs, scratch)
+/tmp/

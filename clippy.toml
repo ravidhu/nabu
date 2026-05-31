@@ -1,0 +1,6 @@
+msrv = "1.83.0"
+avoid-breaking-exported-api = false
+
+disallowed-methods = [
+    { path = "std::process::exit", reason = "propagate errors with anyhow::Result instead" },
+]
