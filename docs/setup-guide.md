@@ -43,15 +43,18 @@ If the doctor reports failures — almost always **Screen Recording** and possib
 
 ### Option B — Pre-built binary (manual)
 
-**If you cloned the repo locally**, copy the binary directly:
+**If you cloned the repo locally**, build the binary then copy it directly:
 
 ```bash
+make build
 sudo cp bin/nabu-aarch64-apple-darwin /usr/local/bin/nabu
 ```
 
-**If you downloaded the file from GitHub via a browser or `curl`**, macOS adds a quarantine flag that blocks it. Remove it first:
+**If you downloaded the file from the [latest GitHub Release](https://github.com/ravidhu/nabu/releases/latest)** via a browser or `curl`, macOS adds a quarantine flag that blocks it. Remove it first:
 
 ```bash
+curl -fLo ~/Downloads/nabu-aarch64-apple-darwin \
+  https://github.com/ravidhu/nabu/releases/latest/download/nabu-aarch64-apple-darwin
 chmod +x ~/Downloads/nabu-aarch64-apple-darwin
 sudo mv ~/Downloads/nabu-aarch64-apple-darwin /usr/local/bin/nabu
 sudo xattr -d com.apple.quarantine /usr/local/bin/nabu

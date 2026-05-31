@@ -30,7 +30,7 @@ After install, double-click **nabu.app** in `~/Applications` to start recording.
 ```bash
 # 1. Download and install
 sudo curl -Lo /usr/local/bin/nabu \
-  https://raw.githubusercontent.com/ravidhu/nabu/main/bin/nabu-aarch64-apple-darwin
+  https://github.com/ravidhu/nabu/releases/latest/download/nabu-aarch64-apple-darwin
 sudo chmod +x /usr/local/bin/nabu
 
 # 2. Remove macOS quarantine flag (set automatically on internet downloads)
@@ -44,8 +44,9 @@ nabu
 # Press Ctrl-C to stop — transcript appears in ~/nabu_data/
 ```
 
-Or clone the repo and copy locally — no quarantine flag needed:
+Or clone the repo, build, and copy locally — no quarantine flag needed:
 ```bash
+make build
 sudo cp bin/nabu-aarch64-apple-darwin /usr/local/bin/nabu
 ```
 
@@ -66,9 +67,11 @@ make build       # compile release binary → bin/nabu-aarch64-apple-darwin
 
 **Option A — pre-built** (Apple Silicon only):
 
-Download [bin/nabu-aarch64-apple-darwin](bin/nabu-aarch64-apple-darwin), place it in your PATH, then remove the macOS quarantine flag:
+Download `nabu-aarch64-apple-darwin` from the [latest release](https://github.com/ravidhu/nabu/releases/latest), place it in your PATH, then remove the macOS quarantine flag:
 
 ```bash
+curl -fLo nabu-aarch64-apple-darwin \
+  https://github.com/ravidhu/nabu/releases/latest/download/nabu-aarch64-apple-darwin
 chmod +x nabu-aarch64-apple-darwin
 xattr -d com.apple.quarantine nabu-aarch64-apple-darwin
 sudo mv nabu-aarch64-apple-darwin /usr/local/bin/nabu

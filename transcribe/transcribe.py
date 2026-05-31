@@ -57,7 +57,7 @@ PYANNOTE_MODEL = "pyannote/speaker-diarization-community-1"
 # ModelScope CDN (modelscope.cn). wespeaker checks ~/.wespeaker/english/ first,
 # so pre-populating it bypasses the ModelScope download entirely.
 WESPEAKER_MIRROR_URL = (
-    "https://raw.githubusercontent.com/ravidhu/nabu/main/models/wespeaker/"
+    "https://github.com/ravidhu/nabu/releases/latest/download/"
     "voxceleb_resnet221_LM.tar.gz"
 )
 
