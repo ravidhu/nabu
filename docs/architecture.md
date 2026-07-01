@@ -144,7 +144,9 @@ Entry point. Parses CLI args with `clap`, wires all the channels and threads tog
 
 ### `src/bootstrap.rs`
 
-Manages the self-contained binary trick. On first run, `ensure()` extracts the embedded `uv` binary and `transcribe.tar.gz` to `~/.nabu/`. A `.version` file tracks whether the extracted scripts match the current binary version; on mismatch the scripts are re-extracted (but `.venv` is preserved to avoid a full Python re-install on every update). `run_setup()` and `run_transcription()` invoke `uv run python transcribe.py` with the appropriate arguments.
+Manages the self-contained binary trick. On first run, `ensure()` extracts the embedded `uv` binary and `transcribe.tar.gz` to `~/.nabu/`. A `.version` file tracks whether the extracted scripts match the current binary version (`CARGO_PKG_VERSION`); on mismatch the scripts are re-extracted (but `.venv` is preserved to avoid a full Python re-install on every update). `run_setup()` and `run_transcription()` invoke `uv run python transcribe.py` with the appropriate arguments.
+
+> **Releasing:** bump `version` in `Cargo.toml` for any release that changes the bundled Python. The re-extract only fires when the version string differs, so shipping a new binary under the same version leaves existing users running the *old* extracted scripts against the new binary. A version bump also re-points `make publish` at the matching `v<version>` GitHub release tag.
 
 ### `src/capture/mic.rs`
 

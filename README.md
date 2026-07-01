@@ -124,6 +124,24 @@ Despite the name, nabu records audio only — it captures no screen content.
 sudo cp target/release/nabu /usr/local/bin/nabu
 ```
 
+### Updating
+
+Re-run the one-line installer — it fetches the latest release binary and replaces the one in place:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ravidhu/nabu/main/install.sh | bash
+```
+
+Or update manually: download the latest `nabu-aarch64-apple-darwin`, then `chmod +x`, remove the quarantine flag, and move it over `/usr/local/bin/nabu` (same steps as [Manual install](#manual-install)).
+
+The binary is self-contained, so updating is just the binary. On the first run after an update it re-extracts its bundled Python (you'll see `extracting Python scripts …`); your `~/.nabu/.venv` and downloaded models are **preserved**, so there's nothing to re-download and no need to re-run `nabu --setup`. Your recordings in `~/nabu_data/` are never touched.
+
+If anything looks stale after an update, force a clean reinstall of the internals (recordings are left alone):
+
+```bash
+rm -rf ~/.nabu && nabu --setup
+```
+
 ### Uninstall
 
 ```bash
