@@ -15,8 +15,9 @@ nabu is a Rust binary that simultaneously captures microphone audio (via `cpal`)
 ```
 ~/.nabu/
 ├── bin/uv                  ← uv runtime manager (extracted from binary on first run)
-├── transcribe/             ← Python scripts (extracted from binary on first run)
-│   ├── transcribe.py
+├── transcribe/             ← Python sources (extracted from binary on first run)
+│   ├── transcribe.py       ← entry shim → stt.cli:main
+│   ├── stt/                ← the transcription package (see "Python side" below)
 │   ├── pyproject.toml
 │   ├── uv.lock
 │   └── .venv/              ← Python venv (created by nabu --setup)
@@ -30,7 +31,9 @@ nabu is a Rust binary that simultaneously captures microphone audio (via `cpal`)
     └── transcript.md       ← timestamped, speaker-labelled transcript
 ```
 
-During recording, files are written to `~/nabu_data/.tmp/<session>/`. After Ctrl-C, the full post-processing pipeline runs in `.tmp/`: merge, transcription, then deletion of the source WAVs. Only once all of that completes is the folder atomically renamed to its final path. A folder left in `.tmp/` means the process was killed mid-session — `mic.wav` and `system.wav` will still be there.
+During recording, files are written to `~/nabu_data/.tmp/<session>/`. After Ctrl-C, post-processing runs in `.tmp/`: `merged.wav` is always produced, then transcription runs **conditionally**. On an interactive TTY nabu asks `Transcribe now? [Y/n]` (Enter defaults to yes); when stdin/stdout is not a terminal (piped, or an unattended max-duration auto-stop) STT is skipped by default so a saved session isn't blocked on a heavy model run nobody is waiting for; `-y`/`--yes` forces it and `--no-stt` disables it. A skipped session prints how to transcribe it later. The original `mic.wav` and `system.wav` are always kept — nothing deletes them — so a finished session folder holds `mic.wav`, `system.wav`, `merged.wav`, and (when transcribed) `transcript.md`. Only once post-processing completes is the folder atomically renamed to its final path. A folder left in `.tmp/` means the process was killed mid-session.
+
+A saved session can be transcribed after the fact with `nabu --transcribe <dir>`: it reads `mic.wav` + `system.wav` from that directory, writes `transcript.md` in place, and exits without recording.
 
 ### Why two separate directories?
 
@@ -71,17 +74,44 @@ nabu (CLI)
 │
 ├─ POST-PROCESSING (sequential, all in .tmp/)
 │   ├─ writer::merge()              mic.wav + system.wav → merged.wav
-│   ├─ bootstrap::run_transcription()  transcribe.py → transcript.md
-│   ├─ fs::remove_file(mic.wav)     } only if both merge and transcription succeeded;
-│   ├─ fs::remove_file(system.wav)  } merged.wav + transcript.md make them redundant
+│   ├─ [conditional: want_stt]      prompted on TTY, off by default when non-interactive,
+│   │                               forced by -y/--yes, disabled by --no-stt
+│   │   └─ bootstrap::run_transcription()  transcribe.py → transcript.md
+│   ├─ (originals kept)             mic.wav + system.wav always retained — never deleted
 │   └─ fs::rename()                 .tmp/<session>/ → nabu_data/<session>/
+│
+├─ [--transcribe <dir>]             deferred path: skip recording entirely,
+│                                   run run_transcription() on a saved session in place
+│
     └─ transcribe.py
         ├─ transcribe(mic.wav)      mlx-whisper → [{start, end, text}] labelled [You]
-        ├─ transcribe(system.wav)   mlx-whisper → [{start, end, text}]
+        │   └─ filter_hallucinations()  drop phantom text on silence/looping audio
+        ├─ transcribe(system.wav)   mlx-whisper → [{start, end, text}] (same filter)
         ├─ diarize_wespeaker() or diarize_pyannote()  → [{start, end, speaker}]
         ├─ assign_speakers()        match Whisper segments to diarization turns
+        ├─ dedup_cross_track()      drop mic segments that are echo of system audio
         └─ merge_and_write()        sort all segments by time → transcript.md
 ```
+
+### Why transcribe each stream separately?
+
+`mic.wav` and `system.wav` are transcribed independently — never the mixed
+`merged.wav` — so each Whisper pass sees a single clean source. That gives exact
+speaker attribution (mic = `You`, system = diarized `Speaker N`) and avoids the
+crosstalk a single mixed pass would produce.
+
+Two post-processing passes clean up the two failure modes of that split:
+
+- **Hallucination filter** (`filter_hallucinations`) — Whisper invents phantom
+  text on near-silent or noisy audio ("Thank you.", subtitle credits, a phrase
+  repeated to death). Segments are dropped using the decoder's own confidence
+  signals: high `no_speech_prob` paired with low `avg_logprob` (silence), or a
+  high `compression_ratio` (looping gibberish). Missing metrics → segment kept.
+- **Cross-track echo dedup** (`dedup_cross_track`) — when the user isn't on
+  headphones the mic re-captures the remote party from the speakers, so their
+  speech lands on *both* tracks. The system track is the clean digital source,
+  so a mic segment is dropped when it overlaps a system segment in time and
+  their normalized text is nearly identical.
 
 ---
 
@@ -150,15 +180,30 @@ Runs at compile time. Bundles `transcribe/` (excluding `.venv`, `__pycache__`, `
 
 ---
 
-## Python side: `transcribe/transcribe.py`
+## Python side: the `stt` package
 
-The script has two modes, selected by the `--setup` flag:
+`transcribe.py` is a thin entry shim (`raise SystemExit(stt.cli.main())`) — it keeps the historical entry-point filename stable so `bootstrap.rs`/`build.rs` need no changes. All logic lives in the `stt/` package, split along a strict **pure vs. heavy** boundary so the unit tests import the pure modules without ever pulling in mlx-whisper/torch/pyannote:
 
-**Setup mode** (`nabu --setup`): calls `huggingface_hub.snapshot_download` for the mlx-whisper model and `wespeaker.load_model` to trigger its model download. Optionally downloads the pyannote model if `--hf-token` is provided.
+| Module | Kind | Responsibility |
+|---|---|---|
+| `models.py` | pure | Whisper shorthand → mlx-community repo map, backend model IDs |
+| `cleanup.py` | pure | hallucination filter + cross-track echo dedup |
+| `transcript.py` | pure | `assign_speakers`, timestamp formatting, transcript rendering |
+| `asr.py` | heavy | `transcribe()` — mlx-whisper (imported lazily) |
+| `diarize.py` | heavy | `diarize_wespeaker` / `diarize_pyannote` (torch/pyannote/wespeaker, lazy) |
+| `download.py` | heavy | `cmd_setup` — model pre-download / caching |
+| `cli.py` | wiring | argparse + the three run modes |
+| `__init__.py` | — | warnings filters (run before any backend import) |
 
-**Transcription mode** (`nabu` normal run): runs mlx-whisper on both `mic.wav` and `system.wav` in parallel (sequential calls but fast on Metal), then runs the chosen diarizer on `system.wav`. `assign_speakers()` labels each Whisper segment by finding the diarization turn with the maximum time overlap. Mic segments are always labelled `[You]`. System segments fall back to `[Remote]` if diarization fails. All segments are sorted by start time and written to `transcript.md`.
+The heavy modules import their ML dependencies **inside functions**, so importing `cli` (or the pure modules) triggers nothing expensive — that's what keeps `--help` and the test suite fast.
 
-**HF_HUB_OFFLINE trick**: pyannote's `Pipeline.from_pretrained` ignores `local_files_only=True` due to an internal bug — the `_pipeline_from_cache` helper temporarily sets `HF_HUB_OFFLINE=1` in the environment instead, which forces fully offline loading.
+The three run modes are selected in `cli.main()`:
+
+**Setup mode** (`nabu --setup`): `download.cmd_setup` calls `huggingface_hub.snapshot_download` for the mlx-whisper model and `wespeaker.load_model` to trigger its model download. Optionally downloads the pyannote model if `--hf-token` is provided.
+
+**Transcription mode** (`nabu` normal run): runs mlx-whisper on both `mic.wav` and `system.wav` (sequential calls but fast on Metal), each passed through `cleanup.filter_hallucinations`, then runs the chosen diarizer on `system.wav`. `transcript.assign_speakers()` labels each Whisper segment by finding the diarization turn with the maximum time overlap. Mic segments are always labelled `[You]`; system segments fall back to `[Remote]` if diarization fails. `cleanup.dedup_cross_track` drops mic segments that echo the system audio, then all segments are sorted by start time and written to `transcript.md`.
+
+**HF_HUB_OFFLINE trick**: pyannote's `Pipeline.from_pretrained` ignores `local_files_only=True` due to an internal bug — the `diarize._pipeline_from_cache` helper temporarily sets `HF_HUB_OFFLINE=1` in the environment instead, which forces fully offline loading.
 
 ---
 
@@ -178,7 +223,7 @@ This avoids a full rebuild when iterating on the Python side.
 
 ## Adding a new diarizer
 
-1. Add a `diarize_<name>(audio_path, ...)` function in `transcribe.py` returning `list[{"start": float, "end": float, "speaker": str}]`.
-2. Add `<name>` to the `--diarizer` choices in the argparse block.
-3. Wire it into the `if args.diarizer == ...` block in `main()`.
+1. Add a `diarize_<name>(audio_path, ...)` function in `stt/diarize.py` returning `list[{"start": float, "end": float, "speaker": str}]`.
+2. Add `<name>` to the `--diarizer` choices in the argparse block in `stt/cli.py`.
+3. Wire it into the `if args.diarizer == ...` blocks in `cli.main()`.
 4. Update the `--diarizer` help text in `src/main.rs` and the diarizer table in `README.md`.

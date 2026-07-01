@@ -167,6 +167,25 @@ Without diarization (`--no-stt` or diarization disabled):
 [00:00:05 → 00:00:07] [Remote]  Yes loud and clear.
 ```
 
+### Transcript quality
+
+Your microphone and the system audio are transcribed **separately** (never the
+mixed `merged.wav`), so each pass sees one clean source — that's what gives exact
+`You` vs `Speaker N` attribution. Two automatic clean-up passes handle the two
+things that separation can't:
+
+- **Hallucination filter** — Whisper sometimes invents phantom text on silence
+  or noise (a stray "Thank you.", subtitle credits, a phrase repeated over and
+  over). Those segments are detected from the model's own confidence signals and
+  dropped before they reach the transcript.
+- **Echo dedup** — if you record **without headphones**, your mic re-captures the
+  remote party coming out of the speakers, so their words would otherwise appear
+  twice (once as `You`, once as `Speaker N`). nabu detects these overlapping
+  near-identical segments and keeps only the clean system-audio copy.
+
+> **Tip:** wearing headphones removes speaker bleed at the source and gives the
+> cleanest transcripts — the echo dedup is there for when you can't.
+
 ---
 
 ## CLI reference
@@ -183,6 +202,8 @@ nabu [OPTIONS]
 | `--diarizer <NAME>` | string | `wespeaker` | Speaker diarization backend: `wespeaker` or `pyannote`. |
 | `--hf-token <TOKEN>` | string | `$HF_TOKEN` | HuggingFace token — only needed for `--diarizer pyannote`. |
 | `--no-stt` | flag | off | Skip transcription entirely. Save WAV files only. |
+| `-y`, `--yes` | flag | off | Transcribe immediately without the "Transcribe now?" prompt (automation). |
+| `--transcribe <DIR>` | path | — | Transcribe an existing saved session directory and exit. No recording started. |
 | `--max-duration <DUR>` | string | `4h` | Auto-stop after this duration. Accepts `h`/`m`/`s` (e.g. `90m`, `2h15m`). |
 | `--extend-by <DUR>` | string | `1h` | Amount added each time you press `[e]` near the deadline. |
 | `--list-models` | flag | — | List Whisper models + diarizers, marking which are cached. |
@@ -200,6 +221,27 @@ By default a recording stops after **4 hours** so a forgotten Ctrl-C cannot fill
 ```
 
 Press `e` to keep going for another hour. Use `--max-duration 8h` (or any `h`/`m`/`s` value) to change the default; use `--extend-by 30m` to change the extension increment.
+
+### Transcribing later
+
+When a recording ends interactively, nabu asks:
+
+```
+Transcribe now? [Y/n]
+```
+
+Press Enter (or `y`) to transcribe immediately; press `n` to save the audio
+now and transcribe later. Either way the session (mic.wav + system.wav) is
+saved. To run transcription afterwards:
+
+```bash
+nabu --transcribe ~/nabu_data/2026_07_01_14_30
+```
+
+Non-interactive runs — a piped stdin, or an unattended `--max-duration`
+auto-stop with no terminal attached — **skip transcription by default** and
+print the `--transcribe` command to run later. Use `-y`/`--yes` to force
+transcription without prompting (useful in scripts).
 
 ### Whisper models
 
@@ -259,6 +301,16 @@ nabu --model large-v3
 nabu --no-stt
 ```
 
+**Skip the prompt and always transcribe (automation):**
+```bash
+nabu -y
+```
+
+**Transcribe a saved session later:**
+```bash
+nabu --transcribe ~/nabu_data/2026_07_01_14_30
+```
+
 **Custom output directory:**
 ```bash
 nabu --out ~/Desktop/meeting-2026-05-27
@@ -299,7 +351,8 @@ nabu/
 │   ├── main.rs           ← CLI args, thread wiring, Ctrl-C, post-processing
 │   ├── bootstrap.rs      ← self-contained binary: uv extraction + Python invocation
 │   ├── session.rs        ← session path resolution (tmp → final rename)
-│   ├── display.rs        ← live recording timer
+│   ├── display.rs        ← live recording timer + per-stream input-level bars
+│   ├── meter.rs          ← lock-free peak meter shared worker → display
 │   ├── resample.rs       ← rubato FFT resampler → 16 kHz mono
 │   ├── writer.rs         ← hound WAV writer + stereo merge
 │   ├── permissions.rs    ← macOS screen recording permission check
@@ -307,7 +360,8 @@ nabu/
 │       ├── mic.rs        ← cpal microphone capture
 │       └── system.rs     ← ScreenCaptureKit system audio capture
 ├── transcribe/
-│   ├── transcribe.py     ← mlx-whisper + wespeaker/pyannote diarization
+│   ├── transcribe.py     ← entry shim → stt.cli:main
+│   ├── stt/              ← package: models · asr · diarize · cleanup · transcript · download · cli
 │   ├── pyproject.toml
 │   └── uv.lock
 ├── build.rs              ← embeds uv binary + transcribe/ into the Rust binary
