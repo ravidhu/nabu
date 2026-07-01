@@ -5,8 +5,13 @@ use crossbeam_channel::{Receiver, Sender};
 use rubato::{FftFixedIn, Resampler};
 
 use crate::capture::RawChunk;
+use crate::meter::Meter;
 
 pub const TARGET_SR: u32 = 16_000;
+
+/// Per-chunk release factor for the level meter. Chunks arrive many times per
+/// display tick, so this yields a visibly fast (but smooth) fall during quiet.
+const METER_DECAY: f32 = 0.90;
 
 pub struct MonoResampler {
     inner: FftFixedIn<f32>,
@@ -101,8 +106,10 @@ mod tests {
     }
 }
 
-/// Spawn a thread that resamples raw capture chunks to 16 kHz mono `Vec<f32>`.
-pub fn spawn_worker(rx: Receiver<RawChunk>, src_sr: u32, src_ch: u16, tx: Sender<Vec<f32>>) {
+/// Spawn a thread that resamples raw capture chunks to 16 kHz mono `Vec<f32>`,
+/// updating `meter` with the input level of every chunk (this thread is not
+/// real-time, unlike the capture callbacks).
+pub fn spawn_worker(rx: Receiver<RawChunk>, src_sr: u32, src_ch: u16, tx: Sender<Vec<f32>>, meter: Meter) {
     thread::spawn(move || {
         let mut resampler = match MonoResampler::new(src_sr, src_ch) {
             Ok(r) => r,
@@ -110,6 +117,8 @@ pub fn spawn_worker(rx: Receiver<RawChunk>, src_sr: u32, src_ch: u16, tx: Sender
         };
         let mut out = Vec::with_capacity(4096);
         while let Ok(chunk) = rx.recv() {
+            // Meter the raw input peak every chunk so the bar decays during quiet.
+            meter.update_from(&chunk.samples, METER_DECAY);
             out.clear();
             if let Err(e) = resampler.push(&chunk.samples, &mut out) {
                 tracing::error!(error = ?e, "resample failed");

@@ -2,6 +2,7 @@ mod bootstrap;
 mod capture;
 mod display;
 mod doctor;
+mod meter;
 mod models;
 mod paths;
 mod permissions;
@@ -161,8 +162,15 @@ async fn main() -> Result<()> {
     })?;
     let sys_stream = system::start(raw_sys_tx).context("start system audio")?;
 
-    resample::spawn_worker(raw_mic_rx, mic_stream.format.sample_rate, mic_stream.format.channels, mic_wav_tx);
-    resample::spawn_worker(raw_sys_rx, sys_stream.format.sample_rate, sys_stream.format.channels, sys_wav_tx);
+    // One level meter per stream — updated on the resample worker thread (never
+    // in the real-time capture callbacks) and read live by the display thread.
+    let mic_meter = meter::Meter::new();
+    let sys_meter = meter::Meter::new();
+
+    resample::spawn_worker(raw_mic_rx, mic_stream.format.sample_rate, mic_stream.format.channels,
+        mic_wav_tx, mic_meter.clone());
+    resample::spawn_worker(raw_sys_rx, sys_stream.format.sample_rate, sys_stream.format.channels,
+        sys_wav_tx, sys_meter.clone());
 
     // ── WAV writers ───────────────────────────────────────────────────────────
 
@@ -187,7 +195,7 @@ async fn main() -> Result<()> {
     let extend_by = display::parse_duration(&args.extend_by)
         .map_err(|e| anyhow!("--extend-by: {e}"))?;
 
-    let handle = display::spawn(Instant::now(), max_duration, extend_by);
+    let handle = display::spawn(Instant::now(), max_duration, extend_by, mic_meter, sys_meter);
     let stop_for_ticker = handle.stop.clone();
 
     tokio::select! {

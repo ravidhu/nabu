@@ -7,11 +7,50 @@ use std::time::{Duration, Instant};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal;
 
+use crate::meter::Meter;
+
 const WARN_BEFORE: Duration = Duration::from_secs(10 * 60);
+const BAR_WIDTH: usize = 24;
 
 /// Format a `u64` second count as `HH:MM:SS`.
 pub fn format_hms(secs: u64) -> String {
     format!("{:02}:{:02}:{:02}", secs / 3600, (secs % 3600) / 60, secs % 60)
+}
+
+/// Render a 0..1 level as a fixed-width bar of filled/empty glyphs. Non-finite
+/// or out-of-range input is clamped into [0, 1].
+pub fn render_bar(level: f32, width: usize) -> String {
+    let level = if level.is_finite() { level.clamp(0.0, 1.0) } else { 0.0 };
+    let filled = ((level * width as f32).round() as usize).min(width);
+    let mut s = String::with_capacity(width * 3);
+    for _ in 0..filled         { s.push('█'); }
+    for _ in 0..width - filled { s.push('░'); }
+    s
+}
+
+/// Draw or redraw the 3-line live region (timer + mic bar + sys bar) in place.
+/// On a repeat draw the cursor is first moved up 2 lines back to the timer row;
+/// the first draw (`*drawn == false`) prints fresh with no up-move. Each line is
+/// cleared to EOL and carriage-returned so it works in raw mode too.
+fn draw_region(drawn: &mut bool, timer: &str, mic: &str, sys: &str) {
+    let mut o = String::new();
+    if *drawn { o.push_str("\x1b[2A"); } // move up to the timer line
+    o.push_str("\r\x1b[2K"); o.push_str(timer); o.push('\n');
+    o.push_str("\r\x1b[2K"); o.push_str(mic);   o.push('\n');
+    o.push_str("\r\x1b[2K"); o.push_str(sys);
+    print!("{o}");
+    io::stdout().flush().ok();
+    *drawn = true;
+}
+
+/// Erase the live region so a transient message can be printed cleanly above the
+/// next redraw. No-op if nothing is drawn (first message, or non-interactive).
+fn clear_region(drawn: &mut bool) {
+    if !*drawn { return; }
+    // Cursor sits on the sys (bottom) line: go up to the timer line, clear all 3.
+    print!("\x1b[2A\r\x1b[2K\x1b[1B\x1b[2K\x1b[1B\x1b[2K\x1b[2A\r");
+    io::stdout().flush().ok();
+    *drawn = false;
 }
 
 /// Parse a human duration like `4h`, `90m`, `1h30m`, `2h15m30s` into a `Duration`.
@@ -55,10 +94,17 @@ pub struct Handle {
     pub thread: JoinHandle<()>,
 }
 
-/// Spawn a thread that prints a live recording timer and watches for a
-/// max-duration deadline. Within `WARN_BEFORE` of the deadline, the user can
-/// press `e` to extend by `extend_by`; pressing Ctrl-C in raw mode also stops.
-pub fn spawn(start: Instant, max_duration: Duration, extend_by: Duration) -> Handle {
+/// Spawn a thread that prints a live recording timer plus per-stream input-level
+/// bars, and watches for a max-duration deadline. Within `WARN_BEFORE` of the
+/// deadline, the user can press `e` to extend by `extend_by`; pressing Ctrl-C in
+/// raw mode also stops.
+pub fn spawn(
+    start: Instant,
+    max_duration: Duration,
+    extend_by: Duration,
+    mic_meter: Meter,
+    sys_meter: Meter,
+) -> Handle {
     let stop     = Arc::new(AtomicBool::new(false));
     let deadline = Arc::new(Mutex::new(start + max_duration));
     let stop_bg     = stop.clone();
@@ -71,6 +117,7 @@ pub fn spawn(start: Instant, max_duration: Duration, extend_by: Duration) -> Han
         let dots = ['●', '◉'];
         let mut i = 0usize;
         let mut warned = false;
+        let mut region_drawn = false;
 
         loop {
             if stop_bg.load(Ordering::Relaxed) { break; }
@@ -78,7 +125,8 @@ pub fn spawn(start: Instant, max_duration: Duration, extend_by: Duration) -> Han
             let now = Instant::now();
             let deadline_now = *deadline_bg.lock().unwrap();
             if now >= deadline_now {
-                println!("\r  ■ max-duration reached — stopping                       ");
+                if interactive { clear_region(&mut region_drawn); }
+                println!("  ■ max-duration reached — stopping");
                 stop_bg.store(true, Ordering::Relaxed);
                 break;
             }
@@ -89,6 +137,7 @@ pub fn spawn(start: Instant, max_duration: Duration, extend_by: Duration) -> Han
 
             if approaching && !warned {
                 warned = true;
+                if interactive { clear_region(&mut region_drawn); }
                 println!();
                 println!("  ⚠  Recording will auto-stop in {} — press [e] to extend +{}, Ctrl-C to stop now",
                     format_hms(remaining.as_secs()), human_short(extend_by));
@@ -97,9 +146,17 @@ pub fn spawn(start: Instant, max_duration: Duration, extend_by: Duration) -> Han
             let suffix = if approaching {
                 format!(" — auto-stop in {}", format_hms(remaining.as_secs()))
             } else { String::new() };
-            print!("\r  {} REC  {}  —  Ctrl-C to stop{}  ",
+            let timer = format!("  {} REC  {}  —  Ctrl-C to stop{}",
                 dots[i % dots.len()], format_hms(elapsed), suffix);
-            io::stdout().flush().ok();
+
+            if interactive {
+                let mic = format!("  mic  {}", render_bar(mic_meter.level(), BAR_WIDTH));
+                let sys = format!("  sys  {}", render_bar(sys_meter.level(), BAR_WIDTH));
+                draw_region(&mut region_drawn, &timer, &mic, &sys);
+            } else {
+                print!("\r{timer}  ");
+                io::stdout().flush().ok();
+            }
             i += 1;
 
             // 200 ms loop: balances timer smoothness with responsive keypress polling.
@@ -112,6 +169,7 @@ pub fn spawn(start: Instant, max_duration: Duration, extend_by: Duration) -> Han
                                     let mut d = deadline_bg.lock().unwrap();
                                     *d += extend_by;
                                     warned = false;
+                                    clear_region(&mut region_drawn);
                                     println!();
                                     println!("  ✓ Extended by {} — new deadline {}",
                                         human_short(extend_by),
@@ -133,7 +191,12 @@ pub fn spawn(start: Instant, max_duration: Duration, extend_by: Duration) -> Han
         }
 
         let total = start.elapsed().as_secs();
-        println!("\r  ■ stopped  —  {} recorded                                ", format_hms(total));
+        if interactive {
+            clear_region(&mut region_drawn);
+            println!("  ■ stopped  —  {} recorded", format_hms(total));
+        } else {
+            println!("\r  ■ stopped  —  {} recorded                                ", format_hms(total));
+        }
     });
 
     drop(deadline);
@@ -190,5 +253,28 @@ mod tests {
         assert!(parse_duration("h").is_err());         // missing number
         assert!(parse_duration("1x").is_err());        // unknown unit
         assert!(parse_duration("1h2x").is_err());
+    }
+
+    #[test]
+    fn bar_full_and_empty() {
+        assert_eq!(render_bar(1.0, 4), "████");
+        assert_eq!(render_bar(0.0, 4), "░░░░");
+    }
+
+    #[test]
+    fn bar_half_rounds() {
+        assert_eq!(render_bar(0.5, 4), "██░░");
+    }
+
+    #[test]
+    fn bar_clamps_out_of_range() {
+        assert_eq!(render_bar(2.0, 4), "████");
+        assert_eq!(render_bar(-1.0, 4), "░░░░");
+    }
+
+    #[test]
+    fn bar_nonfinite_is_empty() {
+        assert_eq!(render_bar(f32::NAN, 4), "░░░░");
+        assert_eq!(render_bar(f32::INFINITY, 4), "░░░░");
     }
 }
