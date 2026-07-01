@@ -58,8 +58,11 @@ fn main() {
         eprintln!("[nabu build] ✓ uv bundled");
     }
 
-    // Re-bundle whenever Python sources change.
+    // Re-bundle whenever Python sources change. stt/ is a directory —
+    // cargo rescans it recursively, so new or edited package modules trigger a
+    // rebuild (as does the transcribe.py entry shim).
     println!("cargo:rerun-if-changed=transcribe/transcribe.py");
+    println!("cargo:rerun-if-changed=transcribe/stt");
     println!("cargo:rerun-if-changed=transcribe/pyproject.toml");
     println!("cargo:rerun-if-changed=transcribe/uv.lock");
     println!("cargo:rerun-if-changed=build.rs");

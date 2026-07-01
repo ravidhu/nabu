@@ -1,11 +1,16 @@
-"""Tests for transcript post-processing helpers in postprocess.py."""
+"""Tests for transcript assembly in stt/transcript.py."""
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
 
-from postprocess import assign_speakers, fmt_timestamp, merge_and_write, render_transcript
+from stt.transcript import (
+    assign_speakers,
+    fmt_timestamp,
+    merge_and_write,
+    render_transcript,
+)
 
 
 # ── fmt_timestamp ────────────────────────────────────────────────────────────

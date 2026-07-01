@@ -1,7 +1,6 @@
-"""Pure-Python transcript post-processing.
+"""Transcript assembly — speaker labelling, timestamp formatting, rendering.
 
-Kept separate from ``transcribe.py`` so unit tests can import these helpers
-without pulling in mlx-whisper, torch, or pyannote.
+Pure: stdlib only, safe to unit-test without importing mlx-whisper/torch/pyannote.
 """
 from __future__ import annotations
 
