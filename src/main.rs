@@ -12,6 +12,7 @@ mod term;
 mod writer;
 
 use std::fs;
+use std::io::{self, IsTerminal};
 use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -51,6 +52,12 @@ struct Args {
     #[arg(long)]
     file: Option<std::path::PathBuf>,
 
+    /// Transcribe an existing saved session directory and exit. No recording is
+    /// started. The directory must contain mic.wav + system.wav (as saved by a
+    /// prior run); transcript.md is written into it.
+    #[arg(long)]
+    transcribe: Option<std::path::PathBuf>,
+
     /// Language code to force during transcription (e.g. en, fr, ja).
     /// Omit to auto-detect. Only useful with multilingual models like large-v3.
     #[arg(long)]
@@ -59,6 +66,11 @@ struct Args {
     /// Skip transcription after recording (save WAV files only).
     #[arg(long, default_value_t = false)]
     no_stt: bool,
+
+    /// Transcribe immediately without prompting (for automation / scripts).
+    /// Skips the interactive "Transcribe now?" question and always runs STT.
+    #[arg(short = 'y', long, default_value_t = false)]
+    yes: bool,
 
     /// Pre-download all models then exit. No recording is started.
     /// Add --hf-token to also cache the pyannote diarization model.
@@ -94,6 +106,19 @@ async fn wait_for_stop(stop: std::sync::Arc<std::sync::atomic::AtomicBool>) {
         if stop.load(Ordering::Relaxed) { return; }
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
+}
+
+/// Ask on the TTY whether to transcribe now. Enter / empty input defaults to
+/// YES; `y`/`yes` is yes; anything else is no. Only called when both stdin and
+/// stdout are terminals (raw mode is already off — the display thread joined).
+fn prompt_transcribe() -> bool {
+    use std::io::Write;
+    print!("Transcribe now? [Y/n] ");
+    let _ = io::stdout().flush();
+    let mut line = String::new();
+    if io::stdin().read_line(&mut line).is_err() { return false; }
+    let ans = line.trim().to_ascii_lowercase();
+    ans.is_empty() || ans == "y" || ans == "yes"
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -134,6 +159,25 @@ async fn main() -> Result<()> {
             args.hf_token.as_deref(),
             args.language.as_deref(),
         );
+    }
+
+    if let Some(ref dir) = args.transcribe {
+        bootstrap::Bootstrap::check_ready(&t_dir)?;
+        // Resolve to an absolute path and confirm it exists / is a directory.
+        let dir = fs::canonicalize(dir)
+            .with_context(|| format!("--transcribe: cannot open session dir {}", dir.display()))?;
+        if !dir.is_dir() {
+            return Err(anyhow!("--transcribe: {} is not a directory", dir.display()));
+        }
+        // session_dir == final_dir: transcribe.py reads mic.wav + system.wav from
+        // the folder and writes transcript.md back into it.
+        bootstrap::run_transcription(
+            &uv, &t_dir, &dir, &dir,
+            &args.model, &args.diarizer, args.hf_token.as_deref(),
+            args.language.as_deref(),
+        )?;
+        let _ = std::process::Command::new("open").arg(&dir).spawn();
+        return Ok(());
     }
 
     if !args.no_stt {
@@ -215,30 +259,37 @@ async fn main() -> Result<()> {
 
     // ── Post-processing ───────────────────────────────────────────────────────
 
-    let merge_ok = match writer::merge(&session.mic_write(), &session.sys_write(), &session.merged_write()) {
-        Ok(()) => true,
-        Err(e) => { tracing::warn!(error = ?e, "could not create merged.wav"); false }
-    };
+    if let Err(e) = writer::merge(&session.mic_write(), &session.sys_write(), &session.merged_write()) {
+        tracing::warn!(error = ?e, "could not create merged.wav");
+    }
 
-    let stt_ok = if !args.no_stt {
-        tracing::info!("running transcription …");
-        match bootstrap::run_transcription(
-            &uv, &t_dir, &session.write_dir, &session.final_dir,
-            &args.model, &args.diarizer, args.hf_token.as_deref(),
-            args.language.as_deref(),
-        ) {
-            Ok(()) => true,
-            Err(e) => { tracing::error!(error = ?e, "transcription failed — audio files are intact"); false }
-        }
+    // Decide whether to run STT now. Non-interactive runs (piped stdin, or an
+    // unattended max-duration auto-stop with no TTY) skip it so a saved session
+    // isn't blocked on a heavy model run nobody is waiting for. --transcribe
+    // <dir> can run it later.
+    let want_stt = if args.no_stt {
+        false
+    } else if args.yes {
+        true
+    } else if io::stdin().is_terminal() && io::stdout().is_terminal() {
+        prompt_transcribe()
     } else {
         false
     };
 
-    // mic.wav and system.wav are redundant once merged.wav and transcript.md exist.
-    if merge_ok && stt_ok {
-        let _ = fs::remove_file(session.mic_write());
-        let _ = fs::remove_file(session.sys_write());
+    if want_stt {
+        tracing::info!("running transcription …");
+        if let Err(e) = bootstrap::run_transcription(
+            &uv, &t_dir, &session.write_dir, &session.final_dir,
+            &args.model, &args.diarizer, args.hf_token.as_deref(),
+            args.language.as_deref(),
+        ) {
+            tracing::error!(error = ?e, "transcription failed — audio files are intact");
+        }
     }
+
+    // The original per-stream WAVs (mic.wav, system.wav) are always kept alongside
+    // merged.wav and transcript.md — nothing deletes the sources anymore.
 
     if session.using_tmp() {
         fs::rename(&session.write_dir, &session.final_dir)
@@ -247,6 +298,14 @@ async fn main() -> Result<()> {
 
     tracing::info!(session = %session.final_dir.display(), "audio saved");
 
+    // When STT was skipped, tell the user how to run it later — mic.wav + system.wav
+    // are still in the session, so the deferred command has its inputs.
+    if !want_stt {
+        println!("\nSession saved without a transcript.\nTo transcribe later:  nabu --transcribe {}",
+            session.final_dir.display());
+    }
+
+    // Open the session folder regardless of whether STT ran.
     let _ = std::process::Command::new("open").arg(&session.final_dir).spawn();
 
     Ok(())
