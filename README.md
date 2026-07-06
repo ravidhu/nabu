@@ -4,10 +4,13 @@
 
 A macOS CLI that records **mic + system audio** simultaneously, saves separate WAV files, then transcribes with **mlx-whisper** (Metal GPU) and labels speakers — no account required.
 
+> [!WARNING]
+> **Recording consent is your responsibility.** nabu captures everyone in the conversation, including the far side of a call. In many places recording a conversation without the knowledge — and in some jurisdictions the explicit consent — of **all** participants is illegal. Always tell everyone they're being recorded before you start. nabu prints a reminder on each recording, but that reminder is not legal advice and does not obtain consent for you.
+
 **Requirements:** macOS 13+, Apple Silicon (M1/M2/M3/M4).
 
 > **New here?** See the [step-by-step setup guide](docs/setup-guide.md) — no technical background needed.
-> **Developer?** See the [architecture doc](docs/architecture.md) for how the code fits together.
+> **Developer?** See the [architecture doc](docs/architecture.md) for how the code fits together, and the [distribution doc](docs/distribution.md) for how it's packaged, released, and installed.
 
 ---
 

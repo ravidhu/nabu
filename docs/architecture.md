@@ -2,6 +2,10 @@
 
 This document explains how nabu works internally, how the pieces fit together, and where to look when changing something.
 
+> For how the binary is packaged, released, and installed on a user's machine
+> (the embedded `uv` + `transcribe.tar.gz`, `install.sh`, release artifacts,
+> updates), see [`distribution.md`](./distribution.md).
+
 ---
 
 ## What nabu does in one paragraph
@@ -18,7 +22,8 @@ nabu is a Rust binary that simultaneously captures microphone audio (via `cpal`)
 ├── transcribe/             ← Python sources (extracted from binary on first run)
 │   ├── transcribe.py       ← entry shim → stt.cli:main
 │   ├── stt/                ← the transcription package (see "Python side" below)
-│   ├── pyproject.toml
+│   ├── pyproject.toml      ← requires-python = ">=3.10,<3.14" (torch wheel ceiling)
+│   ├── .python-version     ← pins 3.13 so uv never picks an incompatible system Python
 │   ├── uv.lock
 │   └── .venv/              ← Python venv (created by nabu --setup)
 └── .version                ← installed version tag; triggers re-extract on upgrade
@@ -52,25 +57,33 @@ The rule of thumb: `~/.nabu/` can always be deleted and regenerated; `~/nabu_dat
 ```
 nabu (CLI)
 │
+├─ DIAGNOSTIC COMMANDS (no bootstrap, no recording, no permission prompt)
+│   ├─ [--list-models]              models::print_list()  → catalog + cached marks
+│   ├─ [--where]                    paths::print()        → on-disk locations
+│   └─ [--doctor]                   doctor::run()         → 9 checks, own exit code
+│
 ├─ bootstrap::resolve_env()         extract uv + transcribe/ to ~/.nabu/ on first run
+│                                   (Bootstrap::ensure(); dev mode returns system uv)
 │
-├─ [--setup flag]
-│   └─ bootstrap::run_setup()       run transcribe.py --setup (download models)
+├─ [--setup flag]                   bootstrap::run_setup()          transcribe.py --setup (download models)
+├─ [--file <audio>]                 bootstrap::run_transcription_file()  transcribe one file, exit
+├─ [--transcribe <dir>]            bootstrap::run_transcription()  transcribe a saved session in place, exit
 │
-├─ bootstrap::check_ready()         bail early if .venv missing
+├─ bootstrap::check_ready()         bail early if .venv missing (unless --no-stt)
 ├─ permissions::check_screen_recording()  request permission if not yet granted
 ├─ session::resolve()               create ~/nabu_data/.tmp/<timestamp>/
 │
 ├─ CAPTURE PHASE (concurrent threads)
 │   ├─ mic::start()                 cpal → raw_mic_tx
 │   ├─ system::start()              ScreenCaptureKit → raw_sys_tx
-│   ├─ resample::spawn_worker()     raw_mic_rx → 16 kHz mono → mic_wav_tx
-│   ├─ resample::spawn_worker()     raw_sys_rx → 16 kHz mono → sys_wav_tx
+│   ├─ resample::spawn_worker()     raw_mic_rx → 16 kHz mono → mic_wav_tx  (updates mic Meter)
+│   ├─ resample::spawn_worker()     raw_sys_rx → 16 kHz mono → sys_wav_tx  (updates sys Meter)
 │   ├─ writer::run()  [thread]      mic_wav_rx → mic.wav
 │   ├─ writer::run()  [thread]      sys_wav_rx → system.wav
-│   └─ display::spawn()  [thread]   live timer on stdout
+│   └─ display::spawn()  [thread]   consent notice + live timer + per-stream level bars;
+│                                   watches the max-duration deadline, [e] extends it
 │
-├─ tokio::signal::ctrl_c()          block until Ctrl-C
+├─ tokio::signal::ctrl_c()          block until Ctrl-C, max-duration auto-stop, or [e]-less deadline
 │
 ├─ POST-PROCESSING (sequential, all in .tmp/)
 │   ├─ writer::merge()              mic.wav + system.wav → merged.wav
@@ -80,10 +93,7 @@ nabu (CLI)
 │   ├─ (originals kept)             mic.wav + system.wav always retained — never deleted
 │   └─ fs::rename()                 .tmp/<session>/ → nabu_data/<session>/
 │
-├─ [--transcribe <dir>]             deferred path: skip recording entirely,
-│                                   run run_transcription() on a saved session in place
-│
-    └─ transcribe.py
+    └─ transcribe.py  (the --setup / --file / --transcribe / post-recording paths all call into this)
         ├─ transcribe(mic.wav)      mlx-whisper → [{start, end, text}] labelled [You]
         │   └─ filter_hallucinations()  drop phantom text on silence/looping audio
         ├─ transcribe(system.wav)   mlx-whisper → [{start, end, text}] (same filter)
@@ -132,7 +142,7 @@ main thread (tokio async)
 **Why unbounded for raw → resample, bounded for resample → writer?**
 The capture callbacks (cpal, ScreenCaptureKit) must never block — they run on real-time audio threads. Unbounded channels absorb bursts without stalling the callback. The bounded channel downstream applies backpressure: if the writer falls behind, the resampler slows down, which is fine because the resampler thread is not real-time.
 
-The display timer and both WAV writers each run on their own `std::thread`. Transcription runs after all channels are closed and writers have joined, so it always sees complete WAV files.
+The display thread and both WAV writers each run on their own `std::thread`. Each resample worker also folds its output into a lock-free `Meter` (an `AtomicU32`), which the display thread reads to draw the live level bars — the audio path never blocks on the UI. Transcription runs after all channels are closed and writers have joined, so it always sees complete WAV files.
 
 ---
 
@@ -144,7 +154,7 @@ Entry point. Parses CLI args with `clap`, wires all the channels and threads tog
 
 ### `src/bootstrap.rs`
 
-Manages the self-contained binary trick. On first run, `ensure()` extracts the embedded `uv` binary and `transcribe.tar.gz` to `~/.nabu/`. A `.version` file tracks whether the extracted scripts match the current binary version (`CARGO_PKG_VERSION`); on mismatch the scripts are re-extracted (but `.venv` is preserved to avoid a full Python re-install on every update). `run_setup()` and `run_transcription()` invoke `uv run python transcribe.py` with the appropriate arguments.
+Manages the self-contained binary trick. `Bootstrap::ensure()` extracts the embedded `uv` binary and `transcribe.tar.gz` to `~/.nabu/` on first run (and returns `None` in dev mode, when `NABU_TRANSCRIBE_DIR` is set, so the source tree + system `uv` are used instead). `resolve_env()` wraps it and hands back the `(uv, transcribe_dir)` pair callers use. A `.version` file tracks whether the extracted scripts match the current binary version (`CARGO_PKG_VERSION`); on mismatch the scripts are re-extracted (but `.venv` is preserved to avoid a full Python re-install on every update). `check_ready()` bails with a friendly "run `nabu --setup`" message if the venv is missing. `run_setup()`, `run_transcription()` (session dir), and `run_transcription_file()` (single audio file) each invoke `uv run --directory <t_dir> python transcribe.py` with the appropriate arguments.
 
 > **Releasing:** bump `version` in `Cargo.toml` for any release that changes the bundled Python. The re-extract only fires when the version string differs, so shipping a new binary under the same version leaves existing users running the *old* extracted scripts against the new binary. A version bump also re-points `make publish` at the matching `v<version>` GitHub release tag.
 
@@ -170,15 +180,35 @@ Captures system audio using ScreenCaptureKit. The API delivers **non-interleaved
 
 ### `src/display.rs`
 
-Spawns a thread that prints a blinking recording timer to stdout every 600 ms using `\r` to overwrite in place. Stopped via an `AtomicBool`.
+Spawns the live-UI thread. On an interactive TTY it prints a first-run consent notice, then draws a 3-line region in place — a blinking `● REC` timer plus a `mic` and a `sys` input-level bar (`render_bar` reads the two `Meter`s) — redrawn on a ~200 ms loop via ANSI cursor moves. It also owns the **max-duration deadline**: within `WARN_BEFORE` (10 min) of the deadline it prompts `[e] to extend`, reads keypresses in raw mode (a `RawModeGuard` restores cooked mode on drop), and handles Ctrl-C itself (raw mode swallows the default SIGINT). When stdout is not a terminal it degrades to a single `\r`-overwritten timer line and a slower poll. Stopped via a shared `AtomicBool`; also exposes `parse_duration` / `format_hms` helpers.
+
+### `src/meter.rs`
+
+`Meter` — a lock-free level meter (an `f32` level stored as bits in an `AtomicU32`, wrapped in `Arc`). The resample workers fold each output chunk into it (fast attack to the chunk peak, slow release), and the display thread reads `level()` for the bars. Neither side ever blocks the other.
 
 ### `src/permissions.rs`
 
 Calls the CoreGraphics private API (`CGPreflightScreenCaptureAccess` / `CGRequestScreenCaptureAccess`) to check and request Screen Recording permission before capture starts. On non-macOS builds it compiles to a no-op.
 
+### `src/doctor.rs`
+
+Backs `nabu --doctor`. Runs nine checks — macOS version, Apple Silicon, Screen Recording + Microphone permission, `~/.nabu/`, `uv`, the selected Whisper model, the selected diarizer, and free disk space — printing each as `[OK]`/`[WARN]`/`[FAIL]` with a numbered remediation walkthrough. Returns a process exit code (non-zero on any FAIL) that `main` forwards; `install.sh` reads it to tailor its closing message. Uses `term::detect()` so permission instructions name the user's actual terminal app.
+
+### `src/models.rs`
+
+Static catalog of the Whisper models and diarizers (name, size, HF repo, notes). Backs `--list-models`, marking which are already cached on disk, and feeds the doctor's model checks.
+
+### `src/paths.rs`
+
+`resolve()` collects every on-disk location nabu touches (binary, `~/.nabu/` internals, uv, HF + wespeaker caches, `~/nabu_data/`, `NABU_TRANSCRIBE_DIR` override, whether an HF token is set). Backs `nabu --where`.
+
+### `src/term.rs`
+
+Best-effort detection of the parent terminal app from `$TERM_PROGRAM`, so the doctor can print "add *this* app at *this* path" instructions for the macOS permission panes.
+
 ### `build.rs`
 
-Runs at compile time. Bundles `transcribe/` (excluding `.venv`, `__pycache__`, `*.pyc`) into `transcribe.tar.gz` using `tar`, then downloads the `uv` binary from GitHub releases and caches it in `OUT_DIR`. Both are baked into the binary via `include_bytes!` in `bootstrap.rs`. Triggers a rebuild only when Python sources, `pyproject.toml`, `uv.lock`, or `build.rs` itself change.
+Runs at compile time. Bundles `transcribe/` (excluding `.venv`, `__pycache__`, `*.pyc` — so `pyproject.toml`, `.python-version`, `uv.lock`, and the `stt/` package all ship) into `transcribe.tar.gz` using `tar`, then downloads the `uv` binary from GitHub releases and caches it in `OUT_DIR`. Both are baked into the binary via `include_bytes!` in `bootstrap.rs`. Triggers a rebuild only when Python sources, `pyproject.toml`, `.python-version`, `uv.lock`, or `build.rs` itself change.
 
 ---
 
@@ -198,6 +228,15 @@ Runs at compile time. Bundles `transcribe/` (excluding `.venv`, `__pycache__`, `
 | `__init__.py` | — | warnings filters (run before any backend import) |
 
 The heavy modules import their ML dependencies **inside functions**, so importing `cli` (or the pure modules) triggers nothing expensive — that's what keeps `--help` and the test suite fast.
+
+> **Python version is pinned, on purpose.** `torch` only publishes wheels for a
+> trailing window of CPython versions (e.g. 2.8.0 → `cp310`–`cp313`, no `cp314`).
+> Without a pin, `uv run` would grab whatever `python3` the machine has — on a
+> fresh macOS that's now 3.14 — and setup would fail with *"can't be installed
+> because it doesn't have a wheel for the current platform."* `transcribe/.python-version`
+> (3.13) makes `uv` provision (downloading if needed) a compatible interpreter,
+> and `requires-python = ">=3.10,<3.14"` rejects too-new Pythons explicitly.
+> When torch ships `cp314` wheels, bump both.
 
 The three run modes are selected in `cli.main()`:
 
