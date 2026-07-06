@@ -2,7 +2,7 @@
 name = "nabu-transcribe"
 version = "0.1.0"
 description = "mlx-whisper transcription + pyannote speaker diarization for nabu"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 dependencies = [
     "mlx-whisper>=0.4.0",
     "pyannote.audio>=3.1.0",

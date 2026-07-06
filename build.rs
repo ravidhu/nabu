@@ -64,6 +64,7 @@ fn main() {
     println!("cargo:rerun-if-changed=transcribe/transcribe.py");
     println!("cargo:rerun-if-changed=transcribe/stt");
     println!("cargo:rerun-if-changed=transcribe/pyproject.toml");
+    println!("cargo:rerun-if-changed=transcribe/.python-version");
     println!("cargo:rerun-if-changed=transcribe/uv.lock");
     println!("cargo:rerun-if-changed=build.rs");
 }
