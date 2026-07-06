@@ -30,3 +30,8 @@ warnings.filterwarnings("ignore", category=UserWarning, module="pyannote.audio.c
 warnings.filterwarnings("ignore", category=UserWarning, module="torchaudio._backend")
 warnings.filterwarnings("ignore", category=UserWarning, module="torchaudio._internal")
 warnings.filterwarnings("ignore", category=UserWarning, module="s3prl")
+# s3prl 0.4.18 has non-raw regex strings (`"\.(.+)"`) that emit a compile-time
+# SyntaxWarning on first import. Third-party bug, cosmetic. Compile-time escape
+# warnings are attributed to the *importing* frame, not s3prl, so match by
+# message rather than module.
+warnings.filterwarnings("ignore", category=SyntaxWarning, message="invalid escape sequence")
