@@ -239,6 +239,11 @@ async fn main() -> Result<()> {
     let extend_by = display::parse_duration(&args.extend_by)
         .map_err(|e| anyhow!("--extend-by: {e}"))?;
 
+    // Recording-consent reminder. Recording others without their knowledge is
+    // illegal in many places — surface this before the live region starts.
+    println!("  ⚠  Recording mic + system audio — make sure everyone involved knows they're being recorded.");
+    println!();
+
     let handle = display::spawn(Instant::now(), max_duration, extend_by, mic_meter, sys_meter);
     let stop_for_ticker = handle.stop.clone();
 
