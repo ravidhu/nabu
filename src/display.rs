@@ -112,10 +112,9 @@ pub fn spawn(
 
     let thread = thread::spawn(move || {
         let interactive = io::stdout().is_terminal();
-        let _raw = if interactive { RawModeGuard::enter().ok() } else { None };
+        let mut raw_guard = if interactive { RawModeGuard::enter().ok() } else { None };
 
         let dots = ['●', '◉'];
-        let mut i = 0usize;
         let mut warned = false;
         let mut region_drawn = false;
 
@@ -132,6 +131,9 @@ pub fn spawn(
             }
 
             let elapsed   = now.duration_since(start).as_secs();
+            // Blink the REC dot on a fixed ~2 Hz wall-clock cadence, independent
+            // of the (much faster) redraw loop that keeps the level bars smooth.
+            let blink     = dots[(now.duration_since(start).as_millis() / 500) as usize % dots.len()];
             let remaining = deadline_now.duration_since(now);
             let approaching = remaining <= WARN_BEFORE;
 
@@ -147,7 +149,7 @@ pub fn spawn(
                 format!(" — auto-stop in {}", format_hms(remaining.as_secs()))
             } else { String::new() };
             let timer = format!("  {} REC  {}  —  Ctrl-C to stop{}",
-                dots[i % dots.len()], format_hms(elapsed), suffix);
+                blink, format_hms(elapsed), suffix);
 
             if interactive {
                 let mic = format!("  mic  {}", render_bar(mic_meter.level(), BAR_WIDTH));
@@ -157,11 +159,11 @@ pub fn spawn(
                 print!("\r{timer}  ");
                 io::stdout().flush().ok();
             }
-            i += 1;
-
-            // 200 ms loop: balances timer smoothness with responsive keypress polling.
+            // 50 ms loop → ~20 fps level bars and snappy keypress polling. The
+            // REC blink and timer are wall-clock derived, so the fast redraw
+            // costs nothing but smoothness.
             if interactive {
-                if let Ok(true) = event::poll(Duration::from_millis(200)) {
+                if let Ok(true) = event::poll(Duration::from_millis(50)) {
                     if let Ok(Event::Key(k)) = event::read() {
                         if k.kind != KeyEventKind::Release {
                             match k.code {
@@ -193,6 +195,11 @@ pub fn spawn(
         let total = start.elapsed().as_secs();
         if interactive {
             clear_region(&mut region_drawn);
+            // Exit raw mode before the final line so its newline is a real
+            // CR+LF — otherwise the cursor stays mid-column and whatever main
+            // prints next (e.g. the "Transcribe now?" prompt) is indented.
+            drop(raw_guard.take());
+            print!("\r");
             println!("  ■ stopped  —  {} recorded", format_hms(total));
         } else {
             println!("\r  ■ stopped  —  {} recorded                                ", format_hms(total));
