@@ -60,7 +60,7 @@ struct Args {
 
     /// Language code to force during transcription (e.g. en, fr, ja).
     /// Omit to auto-detect. Only useful with multilingual models like large-v3.
-    #[arg(long)]
+    #[arg(short = 'l', long)]
     language: Option<String>,
 
     /// Skip transcription after recording (save WAV files only).

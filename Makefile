@@ -22,7 +22,7 @@ build:
 	cp target/$(TARGET)/release/nabu $(BINARY)
 
 run:
-	cargo run
+	cargo run -- $(ARGS)
 
 install: build
 	sudo cp $(BINARY) /usr/local/bin/nabu

@@ -274,6 +274,7 @@ nabu --diarizer pyannote
 
 **Force a specific language (skip auto-detect):**
 ```bash
+nabu -l fr          # short form of --language
 nabu --language fr
 ```
 

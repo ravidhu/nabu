@@ -220,6 +220,7 @@ nabu [OPTIONS]
 | `--setup` | flag | off | Download AI models and exit. No recording started. |
 | `--out <DIR>` | path | `~/nabu_data/YYYY_MM_DD_HH_mm/` | Override session output directory. |
 | `--model <NAME>` | string | `large-v3` | Whisper model for transcription. |
+| `-l`, `--language <LANG>` | string | auto-detect | Force the transcription language (e.g. `en`, `fr`, `ja`). Only useful with multilingual models like `large-v3`. |
 | `--diarizer <NAME>` | string | `wespeaker` | Speaker diarization backend: `wespeaker` or `pyannote`. |
 | `--hf-token <TOKEN>` | string | `$HF_TOKEN` | HuggingFace token — only needed for `--diarizer pyannote`. |
 | `--no-stt` | flag | off | Skip transcription entirely. Save WAV files only. |
@@ -275,7 +276,7 @@ transcription without prompting (useful in scripts).
 | `large-v3` | ~3 GB | **Default.** Best quality, multilingual (EN + FR + more). |
 | `distil-large-v3` | ~1.5 GB | Fast + high quality. Multilingual (EN + FR + more). |
 
-Use `large-v3` or `distil-large-v3` for French or other languages. All models run on Metal GPU via Apple MLX.
+Use `large-v3` or `distil-large-v3` for French or other languages. The language is auto-detected by default; force it with `-l`/`--language` (e.g. `-l fr`) if detection picks wrong. All models run on Metal GPU via Apple MLX.
 
 Models other than `base.en` are downloaded automatically on first use — no separate setup step needed. To pre-download for offline use:
 
@@ -315,6 +316,12 @@ nabu --model small.en
 **French or multilingual recording:**
 ```bash
 nabu --model large-v3
+```
+
+**Force a specific language (skip auto-detect):**
+```bash
+nabu -l fr          # short form of --language
+nabu --language ja
 ```
 
 **Audio only, skip transcription:**
@@ -415,7 +422,7 @@ cat ~/nabu_data/2026_05_27_14_32/transcript.md
 |---|---|
 | `make dev-setup` | Install the `aarch64-apple-darwin` Rust target, sync the Python venv (`transcribe/`), and download AI models. Run once after cloning. |
 | `make build` | Compile a release binary and copy it to `bin/nabu-aarch64-apple-darwin`. |
-| `make run` | Run nabu directly via `cargo run` (debug build, no cross-compile). Fast iteration during development. |
+| `make run` | Run nabu directly via `cargo run` (debug build, no cross-compile). Fast iteration during development. Pass flags with `ARGS`, e.g. `make run ARGS="-l fr"` (plain `make run -l fr` won't work — `make` eats the flags). |
 | `make clean` | Wipe the Cargo build cache. |
 
 ### Dev mode (skip binary embedding)
