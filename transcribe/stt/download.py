@@ -57,11 +57,12 @@ def cmd_setup(model_name: str, hf_token: str | None) -> None:
     print(f"[nabu setup] ✓ mlx-whisper {model_name}", flush=True)
 
     # wespeaker — download from GitHub mirror, fall back to ModelScope
-    print("[nabu setup] downloading wespeaker speaker model …", flush=True)
+    print(f"[nabu setup] downloading wespeaker speaker model ({WESPEAKER_MIRROR_URL}) …", flush=True)
     try:
         _ensure_wespeaker_cached()
     except Exception:
-        pass  # mirror failed — let wespeaker fall back to ModelScope
+        # mirror failed — let wespeaker fall back to its ModelScope CDN
+        print("[nabu setup]   mirror unavailable — falling back to ModelScope (modelscope.cn) …", flush=True)
     with contextlib.redirect_stdout(io.StringIO()):
         import wespeaker
         wespeaker.load_model("english")
