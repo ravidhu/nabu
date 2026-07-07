@@ -14,13 +14,20 @@ from .models import mlx_repo
 def transcribe(audio_path: Path, model_name: str, language: str | None = None) -> list[dict]:
     """Transcribe audio with mlx-whisper. Returns segment dicts with timestamps."""
     import mlx_whisper
+    import soundfile as sf
 
     repo = mlx_repo(model_name)
     lang_label = language or "auto"
     print(f"[nabu] transcribing {audio_path.name} (mlx-whisper {model_name}, lang={lang_label}) …", flush=True)
 
+    # Decode with soundfile rather than letting mlx-whisper load the path itself:
+    # given a path, mlx-whisper shells out to the `ffmpeg` CLI, which end users don't
+    # have installed. Our WAVs are already 16 kHz mono, so hand it the waveform array
+    # (float32 in [-1, 1]) and it skips ffmpeg entirely.
+    audio, _ = sf.read(str(audio_path), dtype="float32")
+
     result = mlx_whisper.transcribe(
-        str(audio_path),
+        audio,
         path_or_hf_repo=repo,
         word_timestamps=True,
         language=language,
