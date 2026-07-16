@@ -19,7 +19,16 @@ Heavy (import mlx-whisper / torch / pyannote / wespeaker lazily, inside function
 """
 from __future__ import annotations
 
+import os
 import warnings
+
+# mlx-whisper's word-timestamp code imports numba during transcription, which launches
+# numba's thread pool with the default thread count. wespeaker's umap_clusterer then
+# sets NUMBA_NUM_THREADS=1 at import, and numba raises "Cannot set NUMBA_NUM_THREADS
+# once the threads have been launched". Pin it to 1 here, before any heavy import, so
+# both sides agree. (numba is only used for whisper's DTW alignment — single-threaded
+# anyway — and umap, which wespeaker wants at 1 thread.)
+os.environ["NUMBA_NUM_THREADS"] = "1"
 
 # Suppress noisy warnings from pyannote and torchaudio about missing FFmpeg/torchcodec.
 # We bypass torchaudio for our own audio loading (soundfile), but sub-libraries still

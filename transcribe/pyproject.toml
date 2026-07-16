@@ -11,6 +11,9 @@ dependencies = [
     "soundfile>=0.13.1",
     "wespeaker @ git+https://github.com/wenet-e2e/wespeaker.git",
     "onnxruntime>=1.24.3",
+    # wespeaker pins umap-learn==0.5.6, which still uses sklearn's force_all_finite —
+    # removed in scikit-learn 1.8, breaking wespeaker diarization at cluster time.
+    "scikit-learn>=1.6,<1.8",
 ]
 
 [dependency-groups]

@@ -22,9 +22,18 @@ def transcribe(audio_path: Path, model_name: str, language: str | None = None) -
 
     # Decode with soundfile rather than letting mlx-whisper load the path itself:
     # given a path, mlx-whisper shells out to the `ffmpeg` CLI, which end users don't
-    # have installed. Our WAVs are already 16 kHz mono, so hand it the waveform array
-    # (float32 in [-1, 1]) and it skips ffmpeg entirely.
-    audio, _ = sf.read(str(audio_path), dtype="float32")
+    # have installed. Hand it the waveform array (float32 in [-1, 1]) instead.
+    audio, sr = sf.read(str(audio_path), dtype="float32")
+
+    # mlx-whisper requires 16 kHz mono. Session WAVs already are, but --file accepts
+    # arbitrary audio (e.g. stereo merged.wav, 44.1 kHz downloads). A 2-D array in
+    # particular makes mlx-whisper's mel code blow up with a cryptic as_strided error.
+    if audio.ndim > 1:
+        audio = audio.mean(axis=1)
+    if sr != 16000:
+        from scipy.signal import resample_poly
+
+        audio = resample_poly(audio, 16000, sr).astype("float32")
 
     result = mlx_whisper.transcribe(
         audio,
