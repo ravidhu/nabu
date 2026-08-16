@@ -23,14 +23,8 @@ pub struct MonoResampler {
 impl MonoResampler {
     pub fn new(src_sample_rate: u32, src_channels: u16) -> Result<Self> {
         let chunk_size = 1024;
-        let inner = FftFixedIn::<f32>::new(
-            src_sample_rate as usize,
-            TARGET_SR as usize,
-            chunk_size,
-            2,
-            1,
-        )
-        .context("rubato FftFixedIn::new")?;
+        let inner = FftFixedIn::<f32>::new(src_sample_rate as usize, TARGET_SR as usize, chunk_size, 2, 1)
+            .context("rubato FftFixedIn::new")?;
         Ok(Self {
             inner,
             src_channels,
@@ -67,14 +61,16 @@ mod tests {
 
     /// Generate a sine wave of `freq` Hz, `secs` seconds, at `sr` Hz, interleaved for `channels`.
     fn sine(freq: f32, secs: f32, sr: u32, channels: u16) -> Vec<f32> {
-        let n = (sr as f32 * secs) as usize;
-        let mut v = Vec::with_capacity(n * channels as usize);
-        for i in 0..n {
-            let t = i as f32 / sr as f32;
-            let s = (2.0 * std::f32::consts::PI * freq * t).sin() * 0.5;
-            for _ in 0..channels { v.push(s); }
+        let frames = (sr as f32 * secs) as usize;
+        let mut wave = Vec::with_capacity(frames * channels as usize);
+        for frame in 0..frames {
+            let time = frame as f32 / sr as f32;
+            let sample = (2.0 * std::f32::consts::PI * freq * time).sin() * 0.5;
+            for _ in 0..channels {
+                wave.push(sample);
+            }
         }
-        v
+        wave
     }
 
     #[test]
@@ -85,9 +81,16 @@ mod tests {
         r.push(&input, &mut out).unwrap();
         let expected = (input.len() as f64) * (TARGET_SR as f64) / 48_000.0;
         let ratio = out.len() as f64 / expected;
-        assert!(ratio > 0.97 && ratio < 1.03,
-            "expected ~{expected} samples, got {} (ratio {})", out.len(), ratio);
-        assert!(out.iter().all(|s| s.is_finite()), "resampled output has NaN/Inf");
+        assert!(
+            ratio > 0.97 && ratio < 1.03,
+            "expected ~{expected} samples, got {} (ratio {})",
+            out.len(),
+            ratio
+        );
+        assert!(
+            out.iter().all(|sample| sample.is_finite()),
+            "resampled output has NaN/Inf"
+        );
     }
 
     #[test]
@@ -95,13 +98,13 @@ mod tests {
         // Stereo: L=+0.5, R=-0.5 → mono = 0.0. Lots of frames so a chunk emits.
         let frames = 4096usize;
         let stereo: Vec<f32> = (0..frames).flat_map(|_| [0.5_f32, -0.5_f32]).collect();
-        let mut r = MonoResampler::new(48_000, 2).unwrap();
+        let mut resampler = MonoResampler::new(48_000, 2).unwrap();
         let mut out = Vec::new();
-        r.push(&stereo, &mut out).unwrap();
+        resampler.push(&stereo, &mut out).unwrap();
         // Output may be empty until enough mono samples accumulate; if non-empty,
         // every sample should be ~0 (within resampler ringing tolerance).
-        for s in &out {
-            assert!(s.abs() < 0.05, "downmix should sum to ~0, got {s}");
+        for sample in &out {
+            assert!(sample.abs() < 0.05, "downmix should sum to ~0, got {sample}");
         }
     }
 }
@@ -112,19 +115,24 @@ mod tests {
 pub fn spawn_worker(rx: Receiver<RawChunk>, src_sr: u32, src_ch: u16, tx: Sender<Vec<f32>>, meter: Meter) {
     thread::spawn(move || {
         let mut resampler = match MonoResampler::new(src_sr, src_ch) {
-            Ok(r) => r,
-            Err(e) => { tracing::error!(error = ?e, "resampler init failed"); return; }
+            Ok(resampler) => resampler,
+            Err(err) => {
+                tracing::error!(error = ?err, "resampler init failed");
+                return;
+            }
         };
         let mut out = Vec::with_capacity(4096);
         while let Ok(chunk) = rx.recv() {
             // Meter the raw input peak every chunk so the bar decays during quiet.
             meter.update_from(&chunk.samples, METER_DECAY);
             out.clear();
-            if let Err(e) = resampler.push(&chunk.samples, &mut out) {
-                tracing::error!(error = ?e, "resample failed");
+            if let Err(err) = resampler.push(&chunk.samples, &mut out) {
+                tracing::error!(error = ?err, "resample failed");
                 continue;
             }
-            if out.is_empty() { continue; }
+            if out.is_empty() {
+                continue;
+            }
             let _ = tx.send(out.clone());
         }
     });

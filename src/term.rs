@@ -9,6 +9,7 @@ pub struct TerminalApp {
 /// Best-effort detection from `$TERM_PROGRAM`, the canonical signal set by
 /// most macOS terminals. Returns `None` when the variable is missing, points
 /// to a multiplexer (`tmux`, `screen`), or names a terminal we don't map.
+#[rustfmt::skip]
 pub fn detect() -> Option<TerminalApp> {
     let prog = std::env::var("TERM_PROGRAM").ok()?;
     Some(match prog.as_str() {

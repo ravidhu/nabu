@@ -1,16 +1,20 @@
-use std::{fs, path::{Path, PathBuf}, process::Command as StdCommand};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command as StdCommand,
+};
 
 use anyhow::{bail, Context, Result};
 
 // Embedded at compile time by build.rs.
-static UV_BINARY:          &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/uv"));
+static UV_BINARY: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/uv"));
 static TRANSCRIBE_ARCHIVE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/transcribe.tar.gz"));
 
 // Version tag — changes whenever Cargo.toml version bumps, triggering a re-extract.
 const NABU_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub struct Bootstrap {
-    pub uv:            PathBuf,
+    pub uv: PathBuf,
     pub transcribe_dir: PathBuf,
 }
 
@@ -28,7 +32,7 @@ impl Bootstrap {
             .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
             .join(".nabu");
 
-        let uv            = nabu_home.join("bin").join("uv");
+        let uv = nabu_home.join("bin").join("uv");
         let transcribe_dir = nabu_home.join("transcribe");
 
         extract_uv(&uv)?;
@@ -58,7 +62,7 @@ impl Bootstrap {
 /// with system `uv`.
 pub fn resolve_env() -> Result<(PathBuf, PathBuf)> {
     match Bootstrap::ensure()? {
-        Some(b) => Ok((b.uv, b.transcribe_dir)),
+        Some(bootstrap) => Ok((bootstrap.uv, bootstrap.transcribe_dir)),
         None => {
             let t_dir = std::env::var("NABU_TRANSCRIBE_DIR")
                 .map(PathBuf::from)
@@ -72,10 +76,13 @@ pub fn resolve_env() -> Result<(PathBuf, PathBuf)> {
 pub fn run_setup(uv: &Path, t_dir: &Path, model: &str, hf_token: Option<&str>) -> Result<()> {
     let mut cmd = StdCommand::new(uv);
     cmd.arg("run")
-       .arg("--directory").arg(t_dir)
-       .arg("python").arg("transcribe.py")
-       .arg("--setup")
-       .arg("--model").arg(model);
+        .arg("--directory")
+        .arg(t_dir)
+        .arg("python")
+        .arg("transcribe.py")
+        .arg("--setup")
+        .arg("--model")
+        .arg(model);
     if let Some(token) = hf_token {
         cmd.arg("--hf-token").arg(token);
     }
@@ -99,12 +106,17 @@ pub fn run_transcription(
 ) -> Result<()> {
     let mut cmd = StdCommand::new(uv);
     cmd.arg("run")
-       .arg("--directory").arg(t_dir)
-       .arg("python").arg("transcribe.py")
-       .arg(session_dir)
-       .arg("--final-dir").arg(final_dir)
-       .arg("--model").arg(model)
-       .arg("--diarizer").arg(diarizer);
+        .arg("--directory")
+        .arg(t_dir)
+        .arg("python")
+        .arg("transcribe.py")
+        .arg(session_dir)
+        .arg("--final-dir")
+        .arg(final_dir)
+        .arg("--model")
+        .arg(model)
+        .arg("--diarizer")
+        .arg(diarizer);
     if let Some(token) = hf_token {
         cmd.arg("--hf-token").arg(token);
     }
@@ -130,11 +142,16 @@ pub fn run_transcription_file(
 ) -> Result<()> {
     let mut cmd = StdCommand::new(uv);
     cmd.arg("run")
-       .arg("--directory").arg(t_dir)
-       .arg("python").arg("transcribe.py")
-       .arg("--file").arg(audio)
-       .arg("--model").arg(model)
-       .arg("--diarizer").arg(diarizer);
+        .arg("--directory")
+        .arg(t_dir)
+        .arg("python")
+        .arg("transcribe.py")
+        .arg("--file")
+        .arg(audio)
+        .arg("--model")
+        .arg(model)
+        .arg("--diarizer")
+        .arg(diarizer);
     if let Some(token) = hf_token {
         cmd.arg("--hf-token").arg(token);
     }
@@ -165,7 +182,7 @@ fn extract_uv(uv: &PathBuf) -> Result<()> {
 
 fn extract_transcribe(nabu_home: &PathBuf, transcribe_dir: &PathBuf) -> Result<()> {
     let version_file = nabu_home.join(".version");
-    let installed    = fs::read_to_string(&version_file).unwrap_or_default();
+    let installed = fs::read_to_string(&version_file).unwrap_or_default();
 
     if installed.trim() == NABU_VERSION && transcribe_dir.exists() {
         return Ok(());
@@ -177,10 +194,10 @@ fn extract_transcribe(nabu_home: &PathBuf, transcribe_dir: &PathBuf) -> Result<(
     // Remove old scripts but preserve .venv to avoid a full re-sync on minor updates.
     if let Ok(entries) = fs::read_dir(transcribe_dir) {
         for entry in entries.flatten() {
-            let p = entry.path();
-            if p.file_name().map_or(true, |n| n != ".venv") {
-                let _ = fs::remove_file(&p);
-                let _ = fs::remove_dir_all(&p);
+            let path = entry.path();
+            if path.file_name().map_or(true, |name| name != ".venv") {
+                let _ = fs::remove_file(&path);
+                let _ = fs::remove_dir_all(&path);
             }
         }
     }
@@ -188,14 +205,20 @@ fn extract_transcribe(nabu_home: &PathBuf, transcribe_dir: &PathBuf) -> Result<(
     let tmp = nabu_home.join("transcribe.tar.gz");
     fs::write(&tmp, TRANSCRIBE_ARCHIVE).context("write transcribe archive")?;
     let ok = StdCommand::new("tar")
-        .args(["-xzf", tmp.to_str().unwrap(), "-C", transcribe_dir.to_str().unwrap()])
+        .args([
+            "-xzf",
+            tmp.to_str().unwrap(),
+            "-C",
+            transcribe_dir.to_str().unwrap(),
+        ])
         .status()
         .context("tar not found")?
         .success();
     fs::remove_file(&tmp).ok();
 
-    if !ok { bail!("failed to extract Python scripts"); }
+    if !ok {
+        bail!("failed to extract Python scripts");
+    }
     fs::write(&version_file, NABU_VERSION)?;
     Ok(())
 }
-

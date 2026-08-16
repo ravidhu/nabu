@@ -1,7 +1,7 @@
 use std::{env, fs, path::PathBuf, process::Command};
 
 fn main() {
-    let root    = env::var("CARGO_MANIFEST_DIR").unwrap();
+    let root = env::var("CARGO_MANIFEST_DIR").unwrap();
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
     // Bake the source-tree path for dev mode (NABU_TRANSCRIBE_DIR env override).
@@ -10,14 +10,17 @@ fn main() {
     // ── Bundle transcribe/ Python sources ────────────────────────────────────
     // Exclude .venv / __pycache__ / *.pyc — uv recreates the venv on first run.
     let archive = out_dir.join("transcribe.tar.gz");
-    let t_src   = format!("{root}/transcribe");
-    let status  = Command::new("tar")
+    let t_src = format!("{root}/transcribe");
+    let status = Command::new("tar")
         .args([
-            "-czf", archive.to_str().unwrap(),
+            "-czf",
+            archive.to_str().unwrap(),
             "--exclude=.venv",
             "--exclude=__pycache__",
             "--exclude=*.pyc",
-            "-C", &t_src, ".",
+            "-C",
+            &t_src,
+            ".",
         ])
         .status()
         .expect("tar not found — required to build nabu");
@@ -28,9 +31,9 @@ fn main() {
     let uv_path = out_dir.join("uv");
     if !uv_path.exists() {
         eprintln!("[nabu build] downloading uv binary …");
-        let tar  = out_dir.join("uv-dl.tar.gz");
-        let url  = "https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-apple-darwin.tar.gz";
-        let ok   = Command::new("curl")
+        let tar = out_dir.join("uv-dl.tar.gz");
+        let url = "https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-apple-darwin.tar.gz";
+        let ok = Command::new("curl")
             .args(["-fsSL", "-o", tar.to_str().unwrap(), url])
             .status()
             .expect("curl not found")

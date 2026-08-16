@@ -50,8 +50,12 @@ mod imp {
 #[cfg(not(target_os = "macos"))]
 mod imp {
     use anyhow::Result;
-    pub fn has_screen_recording() -> bool { true }
-    pub fn check_screen_recording() -> Result<()> { Ok(()) }
+    pub fn has_screen_recording() -> bool {
+        true
+    }
+    pub fn check_screen_recording() -> Result<()> {
+        Ok(())
+    }
     pub fn open_screen_recording_settings() {}
     pub fn open_microphone_settings() {}
 }

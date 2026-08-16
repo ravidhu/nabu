@@ -1,5 +1,8 @@
+# The toolchain contributors develop with. The compatibility promise lives in
+# Cargo.toml's `rust-version` (MSRV) — these are different things and pinning an
+# exact channel here just leaves developers on a stale compiler.
 [toolchain]
-channel = "1.83.0"
+channel = "stable"
 components = ["rustfmt", "clippy"]
 targets = ["aarch64-apple-darwin"]
 profile = "minimal"

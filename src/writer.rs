@@ -16,8 +16,8 @@ pub fn run(path: &Path, rx: Receiver<Vec<f32>>) -> Result<()> {
     let mut writer = WavWriter::create(path, spec).context("create wav writer")?;
 
     while let Ok(samples) = rx.recv() {
-        for s in samples {
-            writer.write_sample(to_i16(s))?;
+        for sample in samples {
+            writer.write_sample(to_i16(sample))?;
         }
     }
 
@@ -28,8 +28,8 @@ pub fn run(path: &Path, rx: Receiver<Vec<f32>>) -> Result<()> {
 /// Merge two mono 16-bit WAV files into a stereo WAV (mic=L, sys=R).
 /// Pads the shorter file with silence so both channels have equal length.
 pub fn merge(mic: &Path, sys: &Path, out: &Path) -> Result<()> {
-    let mut mic_r = WavReader::open(mic).context("open mic.wav for merge")?;
-    let mut sys_r = WavReader::open(sys).context("open system.wav for merge")?;
+    let mut mic_reader = WavReader::open(mic).context("open mic.wav for merge")?;
+    let mut sys_reader = WavReader::open(sys).context("open system.wav for merge")?;
 
     let spec = WavSpec {
         channels: 2,
@@ -37,29 +37,29 @@ pub fn merge(mic: &Path, sys: &Path, out: &Path) -> Result<()> {
         bits_per_sample: 16,
         sample_format: SampleFormat::Int,
     };
-    let mut w = WavWriter::create(out, spec).context("create merged.wav")?;
+    let mut merged = WavWriter::create(out, spec).context("create merged.wav")?;
 
-    let mut mic_samples = mic_r.samples::<i16>();
-    let mut sys_samples = sys_r.samples::<i16>();
+    let mut mic_samples = mic_reader.samples::<i16>();
+    let mut sys_samples = sys_reader.samples::<i16>();
 
     loop {
-        let l = mic_samples.next().transpose().context("read mic sample")?;
-        let r = sys_samples.next().transpose().context("read sys sample")?;
-        match (l, r) {
+        let left = mic_samples.next().transpose().context("read mic sample")?;
+        let right = sys_samples.next().transpose().context("read sys sample")?;
+        match (left, right) {
             (None, None) => break,
-            (l, r) => {
-                w.write_sample(l.unwrap_or(0))?;
-                w.write_sample(r.unwrap_or(0))?;
+            (left, right) => {
+                merged.write_sample(left.unwrap_or(0))?;
+                merged.write_sample(right.unwrap_or(0))?;
             }
         }
     }
 
-    w.finalize().context("finalize merged.wav")?;
+    merged.finalize().context("finalize merged.wav")?;
     Ok(())
 }
 
-fn to_i16(x: f32) -> i16 {
-    (x.clamp(-1.0, 1.0) * i16::MAX as f32) as i16
+fn to_i16(sample: f32) -> i16 {
+    (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16
 }
 
 #[cfg(test)]
@@ -68,10 +68,17 @@ mod tests {
     use hound::WavReader;
 
     fn write_mono_wav(path: &Path, samples: &[i16], sr: u32) {
-        let spec = WavSpec { channels: 1, sample_rate: sr, bits_per_sample: 16, sample_format: SampleFormat::Int };
-        let mut w = WavWriter::create(path, spec).unwrap();
-        for s in samples { w.write_sample(*s).unwrap(); }
-        w.finalize().unwrap();
+        let spec = WavSpec {
+            channels: 1,
+            sample_rate: sr,
+            bits_per_sample: 16,
+            sample_format: SampleFormat::Int,
+        };
+        let mut writer = WavWriter::create(path, spec).unwrap();
+        for sample in samples {
+            writer.write_sample(*sample).unwrap();
+        }
+        writer.finalize().unwrap();
     }
 
     #[test]
@@ -94,10 +101,13 @@ mod tests {
 
         merge(&mic, &sys, &out).unwrap();
 
-        let r = WavReader::open(&out).unwrap();
-        assert_eq!(r.spec().channels, 2);
-        assert_eq!(r.spec().sample_rate, TARGET_SR);
-        let samples: Vec<i16> = r.into_samples::<i16>().map(|s| s.unwrap()).collect();
+        let reader = WavReader::open(&out).unwrap();
+        assert_eq!(reader.spec().channels, 2);
+        assert_eq!(reader.spec().sample_rate, TARGET_SR);
+        let samples: Vec<i16> = reader
+            .into_samples::<i16>()
+            .map(|sample| sample.unwrap())
+            .collect();
         // Stereo interleaved: L, R, L, R, ...
         assert_eq!(samples, vec![100, -100, 200, -200, 300, 0, 400, 0]);
     }

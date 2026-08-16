@@ -25,7 +25,7 @@ use crossbeam_channel::{bounded, unbounded};
 use crate::capture::{mic, system, RawChunk};
 
 const DEFAULT_MAX_DURATION: &str = "4h";
-const DEFAULT_EXTEND_BY:    &str = "1h";
+const DEFAULT_EXTEND_BY: &str = "1h";
 
 #[derive(Parser, Debug)]
 #[command(version, about = "mic + system audio recorder with mlx-whisper transcription")]
@@ -106,7 +106,9 @@ struct Args {
 /// per 250 ms) and only used inside a `tokio::select!` against `ctrl_c()`.
 async fn wait_for_stop(stop: std::sync::Arc<std::sync::atomic::AtomicBool>) {
     loop {
-        if stop.load(Ordering::Relaxed) { return; }
+        if stop.load(Ordering::Relaxed) {
+            return;
+        }
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
 }
@@ -119,7 +121,9 @@ fn prompt_transcribe() -> bool {
     print!("Transcribe now? [Y/n] ");
     let _ = io::stdout().flush();
     let mut line = String::new();
-    if io::stdin().read_line(&mut line).is_err() { return false; }
+    if io::stdin().read_line(&mut line).is_err() {
+        return false;
+    }
     let ans = line.trim().to_ascii_lowercase();
     ans.is_empty() || ans == "y" || ans == "yes"
 }
@@ -158,8 +162,11 @@ async fn main() -> Result<()> {
         bootstrap::Bootstrap::check_ready(&t_dir)?;
         let lang = language::resolve(args.language.as_deref(), &args.model, args.yes);
         return bootstrap::run_transcription_file(
-            &uv, &t_dir, audio,
-            &args.model, &args.diarizer,
+            &uv,
+            &t_dir,
+            audio,
+            &args.model,
+            &args.diarizer,
             args.hf_token.as_deref(),
             lang.as_deref(),
         );
@@ -177,8 +184,13 @@ async fn main() -> Result<()> {
         // session_dir == final_dir: transcribe.py reads mic.wav + system.wav from
         // the folder and writes transcript.md back into it.
         bootstrap::run_transcription(
-            &uv, &t_dir, &dir, &dir,
-            &args.model, &args.diarizer, args.hf_token.as_deref(),
+            &uv,
+            &t_dir,
+            &dir,
+            &dir,
+            &args.model,
+            &args.diarizer,
+            args.hf_token.as_deref(),
             lang.as_deref(),
         )?;
         let _ = std::process::Command::new("open").arg(&dir).spawn();
@@ -200,11 +212,11 @@ async fn main() -> Result<()> {
     let (mic_wav_tx, mic_wav_rx) = bounded::<Vec<f32>>(1024);
     let (sys_wav_tx, sys_wav_rx) = bounded::<Vec<f32>>(1024);
 
-    let mic_stream = mic::start(raw_mic_tx).map_err(|e| {
+    let mic_stream = mic::start(raw_mic_tx).map_err(|err| {
         // Open the exact Microphone pane so the user doesn't have to navigate.
         permissions::open_microphone_settings();
         anyhow!(
-            "{e}\n\nMicrophone access denied or unavailable.\n  \
+            "{err}\n\nMicrophone access denied or unavailable.\n  \
              → System Settings has been opened to Privacy & Security → Microphone.\n  \
              Toggle your terminal app ON, then restart nabu."
         )
@@ -216,33 +228,42 @@ async fn main() -> Result<()> {
     let mic_meter = meter::Meter::new();
     let sys_meter = meter::Meter::new();
 
-    resample::spawn_worker(raw_mic_rx, mic_stream.format.sample_rate, mic_stream.format.channels,
-        mic_wav_tx, mic_meter.clone());
-    resample::spawn_worker(raw_sys_rx, sys_stream.format.sample_rate, sys_stream.format.channels,
-        sys_wav_tx, sys_meter.clone());
+    resample::spawn_worker(
+        raw_mic_rx,
+        mic_stream.format.sample_rate,
+        mic_stream.format.channels,
+        mic_wav_tx,
+        mic_meter.clone(),
+    );
+    resample::spawn_worker(
+        raw_sys_rx,
+        sys_stream.format.sample_rate,
+        sys_stream.format.channels,
+        sys_wav_tx,
+        sys_meter.clone(),
+    );
 
     // ── WAV writers ───────────────────────────────────────────────────────────
 
     let mic_path = session.mic_write();
     let mic_writer = thread::spawn(move || {
-        if let Err(e) = writer::run(&mic_path, mic_wav_rx) {
-            tracing::error!(error = ?e, "mic wav writer failed");
+        if let Err(err) = writer::run(&mic_path, mic_wav_rx) {
+            tracing::error!(error = ?err, "mic wav writer failed");
         }
     });
 
     let sys_path = session.sys_write();
     let sys_writer = thread::spawn(move || {
-        if let Err(e) = writer::run(&sys_path, sys_wav_rx) {
-            tracing::error!(error = ?e, "system wav writer failed");
+        if let Err(err) = writer::run(&sys_path, sys_wav_rx) {
+            tracing::error!(error = ?err, "system wav writer failed");
         }
     });
 
     // ── Record until Ctrl-C or max-duration ───────────────────────────────────
 
-    let max_duration = display::parse_duration(&args.max_duration)
-        .map_err(|e| anyhow!("--max-duration: {e}"))?;
-    let extend_by = display::parse_duration(&args.extend_by)
-        .map_err(|e| anyhow!("--extend-by: {e}"))?;
+    let max_duration =
+        display::parse_duration(&args.max_duration).map_err(|err| anyhow!("--max-duration: {err}"))?;
+    let extend_by = display::parse_duration(&args.extend_by).map_err(|err| anyhow!("--extend-by: {err}"))?;
 
     // Recording-consent reminder. Recording others without their knowledge is
     // illegal in many places — surface this before the live region starts.
@@ -269,8 +290,12 @@ async fn main() -> Result<()> {
 
     // ── Post-processing ───────────────────────────────────────────────────────
 
-    if let Err(e) = writer::merge(&session.mic_write(), &session.sys_write(), &session.merged_write()) {
-        tracing::warn!(error = ?e, "could not create merged.wav");
+    if let Err(err) = writer::merge(
+        &session.mic_write(),
+        &session.sys_write(),
+        &session.merged_write(),
+    ) {
+        tracing::warn!(error = ?err, "could not create merged.wav");
     }
 
     // Decide whether to run STT now. Non-interactive runs (piped stdin, or an
@@ -290,12 +315,17 @@ async fn main() -> Result<()> {
     if want_stt {
         let lang = language::resolve(args.language.as_deref(), &args.model, args.yes);
         tracing::info!("running transcription …");
-        if let Err(e) = bootstrap::run_transcription(
-            &uv, &t_dir, &session.write_dir, &session.final_dir,
-            &args.model, &args.diarizer, args.hf_token.as_deref(),
+        if let Err(err) = bootstrap::run_transcription(
+            &uv,
+            &t_dir,
+            &session.write_dir,
+            &session.final_dir,
+            &args.model,
+            &args.diarizer,
+            args.hf_token.as_deref(),
             lang.as_deref(),
         ) {
-            tracing::error!(error = ?e, "transcription failed — audio files are intact");
+            tracing::error!(error = ?err, "transcription failed — audio files are intact");
         }
     }
 
@@ -303,8 +333,7 @@ async fn main() -> Result<()> {
     // merged.wav and transcript.md — nothing deletes the sources anymore.
 
     if session.using_tmp() {
-        fs::rename(&session.write_dir, &session.final_dir)
-            .context("move session out of .tmp")?;
+        fs::rename(&session.write_dir, &session.final_dir).context("move session out of .tmp")?;
     }
 
     tracing::info!(session = %session.final_dir.display(), "audio saved");
@@ -312,8 +341,10 @@ async fn main() -> Result<()> {
     // When STT was skipped, tell the user how to run it later — mic.wav + system.wav
     // are still in the session, so the deferred command has its inputs.
     if !want_stt {
-        println!("\nSession saved without a transcript.\nTo transcribe later:  nabu --transcribe {}",
-            session.final_dir.display());
+        println!(
+            "\nSession saved without a transcript.\nTo transcribe later:  nabu --transcribe {}",
+            session.final_dir.display()
+        );
     }
 
     // Open the session folder regardless of whether STT ran.

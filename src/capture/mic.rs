@@ -25,7 +25,7 @@ pub fn start(tx: Sender<RawChunk>) -> Result<MicStream> {
     };
     tracing::info!(?format, "mic format");
 
-    let err_fn = |e| tracing::error!(error = ?e, "mic stream error");
+    let err_fn = |err| tracing::error!(error = ?err, "mic stream error");
 
     let stream = match sample_format {
         cpal::SampleFormat::F32 => {
@@ -34,7 +34,10 @@ pub fn start(tx: Sender<RawChunk>) -> Result<MicStream> {
             device.build_input_stream(
                 &stream_config,
                 move |data: &[f32], _| {
-                    let _ = tx.send(RawChunk { samples: data.to_vec(), format: fmt.clone() });
+                    let _ = tx.send(RawChunk {
+                        samples: data.to_vec(),
+                        format: fmt.clone(),
+                    });
                 },
                 err_fn,
                 None,
@@ -46,8 +49,14 @@ pub fn start(tx: Sender<RawChunk>) -> Result<MicStream> {
             device.build_input_stream(
                 &stream_config,
                 move |data: &[i16], _| {
-                    let samples = data.iter().map(|s| *s as f32 / i16::MAX as f32).collect();
-                    let _ = tx.send(RawChunk { samples, format: fmt.clone() });
+                    let samples = data
+                        .iter()
+                        .map(|sample| *sample as f32 / i16::MAX as f32)
+                        .collect();
+                    let _ = tx.send(RawChunk {
+                        samples,
+                        format: fmt.clone(),
+                    });
                 },
                 err_fn,
                 None,
@@ -61,9 +70,12 @@ pub fn start(tx: Sender<RawChunk>) -> Result<MicStream> {
                 move |data: &[u16], _| {
                     let samples = data
                         .iter()
-                        .map(|s| (*s as f32 - u16::MAX as f32 / 2.0) / (u16::MAX as f32 / 2.0))
+                        .map(|sample| (*sample as f32 - u16::MAX as f32 / 2.0) / (u16::MAX as f32 / 2.0))
                         .collect();
-                    let _ = tx.send(RawChunk { samples, format: fmt.clone() });
+                    let _ = tx.send(RawChunk {
+                        samples,
+                        format: fmt.clone(),
+                    });
                 },
                 err_fn,
                 None,
@@ -73,5 +85,8 @@ pub fn start(tx: Sender<RawChunk>) -> Result<MicStream> {
     };
 
     stream.play().context("mic stream play")?;
-    Ok(MicStream { _stream: stream, format })
+    Ok(MicStream {
+        _stream: stream,
+        format,
+    })
 }

@@ -8,6 +8,7 @@ pub struct WhisperEntry {
     pub notes: &'static str,
 }
 
+#[rustfmt::skip]
 pub const WHISPER_MODELS: &[WhisperEntry] = &[
     WhisperEntry { name: "tiny.en",         size: "~75 MB",  hf_repo: "mlx-community/whisper-tiny.en-mlx",        notes: "Fastest, lowest accuracy. English only." },
     WhisperEntry { name: "base.en",         size: "~145 MB", hf_repo: "mlx-community/whisper-base.en-mlx",        notes: "Good balance. English only." },
@@ -24,6 +25,7 @@ pub struct DiarizerEntry {
     pub notes: &'static str,
 }
 
+#[rustfmt::skip]
 pub const DIARIZERS: &[DiarizerEntry] = &[
     DiarizerEntry { name: "wespeaker", size: "~26 MB",  needs_token: false, notes: "Default. No account needed." },
     DiarizerEntry { name: "pyannote",  size: "~300 MB", needs_token: true,  notes: "Higher accuracy. Free HuggingFace token required." },
@@ -34,27 +36,27 @@ pub const DIARIZERS: &[DiarizerEntry] = &[
 pub fn mlx_repo(model: &str) -> String {
     WHISPER_MODELS
         .iter()
-        .find(|m| m.name == model)
-        .map(|m| m.hf_repo.to_string())
+        .find(|entry| entry.name == model)
+        .map(|entry| entry.hf_repo.to_string())
         .unwrap_or_else(|| format!("mlx-community/whisper-{model}-mlx"))
 }
 
 /// HuggingFace hub turns `org/repo` into `models--org--repo` on disk.
 pub fn hf_cache_dir(repo: &str) -> Option<PathBuf> {
     let folder = format!("models--{}", repo.replace('/', "--"));
-    dirs::home_dir().map(|h| h.join(".cache/huggingface/hub").join(folder))
+    dirs::home_dir().map(|home| home.join(".cache/huggingface/hub").join(folder))
 }
 
 pub fn whisper_cached(model: &str) -> bool {
     match hf_cache_dir(&mlx_repo(model)) {
-        Some(p) => p.exists(),
+        Some(dir) => dir.exists(),
         None => false,
     }
 }
 
 pub fn wespeaker_cached() -> bool {
     dirs::home_dir()
-        .map(|h| h.join(".wespeaker/english/avg_model.pt").exists())
+        .map(|home| home.join(".wespeaker/english/avg_model.pt").exists())
         .unwrap_or(false)
 }
 
@@ -63,31 +65,47 @@ pub fn pyannote_cached() -> bool {
         "pyannote/speaker-diarization-community-1",
         "pyannote/segmentation-3.0",
     ];
-    repos.iter().all(|r| hf_cache_dir(r).map(|p| p.exists()).unwrap_or(false))
+    repos
+        .iter()
+        .all(|repo| hf_cache_dir(repo).map(|dir| dir.exists()).unwrap_or(false))
 }
 
 pub fn print_list() {
     println!("Whisper models");
     println!("  {:<18} {:<8}  {}", "name", "size", "status");
     println!("  {:-<18} {:-<8}  {:-<40}", "", "", "");
-    for m in WHISPER_MODELS {
-        let cached = if whisper_cached(m.name) { "cached" } else { "not cached" };
-        println!("  {:<18} {:<8}  [{}] — {}", m.name, m.size, cached, m.notes);
+    for model in WHISPER_MODELS {
+        let cached = if whisper_cached(model.name) {
+            "cached"
+        } else {
+            "not cached"
+        };
+        println!(
+            "  {:<18} {:<8}  [{}] — {}",
+            model.name, model.size, cached, model.notes
+        );
     }
 
     println!();
     println!("Diarizers");
     println!("  {:<10} {:<8}  {}", "name", "size", "status");
     println!("  {:-<10} {:-<8}  {:-<40}", "", "", "");
-    for d in DIARIZERS {
-        let cached = match d.name {
+    for diarizer in DIARIZERS {
+        let cached = match diarizer.name {
             "wespeaker" => wespeaker_cached(),
             "pyannote" => pyannote_cached(),
             _ => false,
         };
-        let token = if d.needs_token { " (needs HF_TOKEN)" } else { "" };
+        let token = if diarizer.needs_token {
+            " (needs HF_TOKEN)"
+        } else {
+            ""
+        };
         let status = if cached { "cached" } else { "not cached" };
-        println!("  {:<10} {:<8}  [{}] — {}{}", d.name, d.size, status, d.notes, token);
+        println!(
+            "  {:<10} {:<8}  [{}] — {}{}",
+            diarizer.name, diarizer.size, status, diarizer.notes, token
+        );
     }
 
     println!();
@@ -101,9 +119,12 @@ mod tests {
 
     #[test]
     fn known_models_map_to_explicit_repos() {
-        assert_eq!(mlx_repo("large-v3"),        "mlx-community/whisper-large-v3-mlx");
-        assert_eq!(mlx_repo("distil-large-v3"), "mlx-community/distil-whisper-large-v3");
-        assert_eq!(mlx_repo("tiny.en"),         "mlx-community/whisper-tiny.en-mlx");
+        assert_eq!(mlx_repo("large-v3"), "mlx-community/whisper-large-v3-mlx");
+        assert_eq!(
+            mlx_repo("distil-large-v3"),
+            "mlx-community/distil-whisper-large-v3"
+        );
+        assert_eq!(mlx_repo("tiny.en"), "mlx-community/whisper-tiny.en-mlx");
     }
 
     #[test]
@@ -113,7 +134,7 @@ mod tests {
 
     #[test]
     fn hf_cache_dir_escapes_slash() {
-        let p = hf_cache_dir("pyannote/segmentation-3.0").unwrap();
-        assert!(p.ends_with("models--pyannote--segmentation-3.0"));
+        let dir = hf_cache_dir("pyannote/segmentation-3.0").unwrap();
+        assert!(dir.ends_with("models--pyannote--segmentation-3.0"));
     }
 }
