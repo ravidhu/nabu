@@ -272,11 +272,13 @@ nabu --no-stt
 nabu --diarizer pyannote
 ```
 
-**Force a specific language (skip auto-detect):**
+**Force a specific language (skip the interactive picker and auto-detect):**
 ```bash
 nabu -l fr          # short form of --language
 nabu --language fr
 ```
+
+Without `-l`, a multilingual model prompts with a numbered language menu before transcription starts (Enter = auto-detect). Pass `-y` to suppress it in scripts.
 
 **Cap the recording at 1 hour instead of 4:**
 ```bash

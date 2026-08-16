@@ -2,6 +2,7 @@ mod bootstrap;
 mod capture;
 mod display;
 mod doctor;
+mod language;
 mod meter;
 mod models;
 mod paths;
@@ -59,7 +60,8 @@ struct Args {
     transcribe: Option<std::path::PathBuf>,
 
     /// Language code to force during transcription (e.g. en, fr, ja).
-    /// Omit to auto-detect. Only useful with multilingual models like large-v3.
+    /// Omit to pick one interactively (or auto-detect on a non-TTY run).
+    /// Only useful with multilingual models like large-v3.
     #[arg(short = 'l', long)]
     language: Option<String>,
 
@@ -68,7 +70,8 @@ struct Args {
     no_stt: bool,
 
     /// Transcribe immediately without prompting (for automation / scripts).
-    /// Skips the interactive "Transcribe now?" question and always runs STT.
+    /// Skips the interactive "Transcribe now?" and language questions, always
+    /// runs STT, and leaves the language auto-detected unless -l is given.
     #[arg(short = 'y', long, default_value_t = false)]
     yes: bool,
 
@@ -153,11 +156,12 @@ async fn main() -> Result<()> {
 
     if let Some(ref audio) = args.file {
         bootstrap::Bootstrap::check_ready(&t_dir)?;
+        let lang = language::resolve(args.language.as_deref(), &args.model, args.yes);
         return bootstrap::run_transcription_file(
             &uv, &t_dir, audio,
             &args.model, &args.diarizer,
             args.hf_token.as_deref(),
-            args.language.as_deref(),
+            lang.as_deref(),
         );
     }
 
@@ -169,12 +173,13 @@ async fn main() -> Result<()> {
         if !dir.is_dir() {
             return Err(anyhow!("--transcribe: {} is not a directory", dir.display()));
         }
+        let lang = language::resolve(args.language.as_deref(), &args.model, args.yes);
         // session_dir == final_dir: transcribe.py reads mic.wav + system.wav from
         // the folder and writes transcript.md back into it.
         bootstrap::run_transcription(
             &uv, &t_dir, &dir, &dir,
             &args.model, &args.diarizer, args.hf_token.as_deref(),
-            args.language.as_deref(),
+            lang.as_deref(),
         )?;
         let _ = std::process::Command::new("open").arg(&dir).spawn();
         return Ok(());
@@ -283,11 +288,12 @@ async fn main() -> Result<()> {
     };
 
     if want_stt {
+        let lang = language::resolve(args.language.as_deref(), &args.model, args.yes);
         tracing::info!("running transcription …");
         if let Err(e) = bootstrap::run_transcription(
             &uv, &t_dir, &session.write_dir, &session.final_dir,
             &args.model, &args.diarizer, args.hf_token.as_deref(),
-            args.language.as_deref(),
+            lang.as_deref(),
         ) {
             tracing::error!(error = ?e, "transcription failed — audio files are intact");
         }

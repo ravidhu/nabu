@@ -220,11 +220,11 @@ nabu [OPTIONS]
 | `--setup` | flag | off | Download AI models and exit. No recording started. |
 | `--out <DIR>` | path | `~/nabu_data/YYYY_MM_DD_HH_mm/` | Override session output directory. |
 | `--model <NAME>` | string | `large-v3` | Whisper model for transcription. |
-| `-l`, `--language <LANG>` | string | auto-detect | Force the transcription language (e.g. `en`, `fr`, `ja`). Only useful with multilingual models like `large-v3`. |
+| `-l`, `--language <LANG>` | string | ask, else auto-detect | Force the transcription language (e.g. `en`, `fr`, `ja`) and skip the interactive language picker. Only useful with multilingual models like `large-v3`. |
 | `--diarizer <NAME>` | string | `wespeaker` | Speaker diarization backend: `wespeaker` or `pyannote`. |
 | `--hf-token <TOKEN>` | string | `$HF_TOKEN` | HuggingFace token — only needed for `--diarizer pyannote`. |
 | `--no-stt` | flag | off | Skip transcription entirely. Save WAV files only. |
-| `-y`, `--yes` | flag | off | Transcribe immediately without the "Transcribe now?" prompt (automation). |
+| `-y`, `--yes` | flag | off | Transcribe immediately without the "Transcribe now?" or language prompts (automation). |
 | `--transcribe <DIR>` | path | — | Transcribe an existing saved session directory and exit. No recording started. |
 | `--max-duration <DUR>` | string | `4h` | Auto-stop after this duration. Accepts `h`/`m`/`s` (e.g. `90m`, `2h15m`). |
 | `--extend-by <DUR>` | string | `1h` | Amount added each time you press `[e]` near the deadline. |
@@ -318,7 +318,28 @@ nabu --model small.en
 nabu --model large-v3
 ```
 
-**Force a specific language (skip auto-detect):**
+**Choose the language interactively:**
+
+With a multilingual model, nabu asks before it starts transcribing — after the "Transcribe now?" question when a recording ends, and up front for `--file` / `--transcribe`:
+
+```
+Language:
+   1) auto-detect (default)
+   2) English    (en)
+   3) French     (fr)
+   4) German     (de)
+   5) Spanish    (es)
+   6) Italian    (it)
+   7) Portuguese (pt)
+   8) Japanese   (ja)
+   9) Chinese    (zh)
+  10) other — type a code
+> 3
+```
+
+Press Enter to auto-detect. Any of Whisper's ~100 language codes can be typed directly at the `>` prompt or behind entry 10. The question is skipped for English-only models (`*.en`), when `-y` is passed, and on non-TTY runs.
+
+**Force a specific language (skip the prompt and auto-detect):**
 ```bash
 nabu -l fr          # short form of --language
 nabu --language ja
